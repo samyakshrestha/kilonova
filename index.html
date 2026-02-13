@@ -1242,6 +1242,8 @@
           uGRBDirect: { value: 0.0 },
           uGRBCocoon: { value: 0.0 },
           uGRBShockR: { value: 0.0 },
+          uGRBShockW: { value: 0.04 },
+          uGRBAge: { value: -1.0 },
           uGRBCenter: { value: new THREE.Vector2(0.5, 0.5) },
           uGRBAxisDir: { value: new THREE.Vector2(1.0, 0.0) },
           uStarScreen1: { value: new THREE.Vector2(-10, -10) },
@@ -1265,6 +1267,8 @@
           uniform float uGRBDirect;
           uniform float uGRBCocoon;
           uniform float uGRBShockR;
+          uniform float uGRBShockW;
+          uniform float uGRBAge;
           uniform vec2 uGRBCenter;
           uniform vec2 uGRBAxisDir;
           uniform vec2 uStarScreen1;
@@ -1303,6 +1307,32 @@
             return vis * tint * (core * 0.95 + halo * 0.40 + outer * 0.12 + streak * 0.34);
           }
 
+          vec3 kelvinToRGBLite(float tempK) {
+            float t = clamp(tempK, 1200.0, 40000.0) / 100.0;
+            float r;
+            float g;
+            float b;
+
+            if (t <= 66.0) {
+              r = 1.0;
+              g = clamp(0.39008158 * log(max(t, 1e-3)) - 0.63184144, 0.0, 1.0);
+            } else {
+              float tt = t - 60.0;
+              r = clamp(1.29293619 * pow(tt, -0.13320476), 0.0, 1.0);
+              g = clamp(1.12989086 * pow(tt, -0.07551485), 0.0, 1.0);
+            }
+
+            if (t >= 66.0) {
+              b = 1.0;
+            } else if (t <= 19.0) {
+              b = 0.0;
+            } else {
+              b = clamp(0.54320679 * log(t - 10.0) - 1.19625409, 0.0, 1.0);
+            }
+
+            return vec3(r, g, b);
+          }
+
           void main() {
             vec2 center = vec2(0.5);
             vec2 dirToCenter = (vUv - center);
@@ -1334,21 +1364,34 @@
             vec2 nAxis = vec2(-axis.y, axis.x);
             float along = dot(d, axis);
             float across = dot(d, nAxis);
+            float grbAge = max(uGRBAge, 0.0);
+            float hardPhase = exp(-grbAge / 0.35);
+            float softPhase = smoothstep(0.35, 3.8, grbAge);
 
             float promptCore = exp(-r * r * 220.0);
             float promptLine = exp(-abs(across) * 230.0) * exp(-abs(along) * 3.2);
             float promptHalo = exp(-r * r * 20.0);
             float promptSheath = exp(-abs(across) * (88.0 - 34.0 * uGRBDirect)) * exp(-abs(along) * 1.8);
-            vec3 promptCol = vec3(1.02, 1.10, 1.35);
+            float promptEdge = exp(-pow(abs(across) / (0.08 + 0.06 * hardPhase), 2.0)) * exp(-abs(along) * 1.45);
+            vec3 promptColHard = kelvinToRGBLite(22000.0);
+            vec3 promptColSoft = kelvinToRGBLite(9000.0);
+            vec3 promptCol = mix(promptColHard, promptColSoft, 1.0 - hardPhase);
             outColor += uGRBDirect * promptCol * (2.0 * promptCore + 1.65 * promptLine + 0.30 * promptHalo + 0.42 * promptSheath);
+            outColor += uGRBDirect * mix(vec3(0.68, 0.88, 1.48), vec3(0.56, 0.74, 1.18), softPhase) * (0.42 * promptEdge);
 
-            float shockW = 0.020 + 0.045 * uGRBCocoon;
+            float shockW = max(uGRBShockW, 1e-4);
+            float az = atan(d.y, d.x);
+            float ringWarp = 0.88 + 0.12 * sin(az * 11.0 + r * 38.0 - grbAge * 5.4);
             float shockRing = exp(-pow((r - uGRBShockR) / max(shockW, 1e-4), 2.0));
             float shockRing2 = exp(-pow((r - uGRBShockR * 1.38) / max(shockW * 1.45, 1e-4), 2.0));
+            float shockRing3 = exp(-pow((r - uGRBShockR * 1.80) / max(shockW * 2.20, 1e-4), 2.0)) * exp(-grbAge / 2.1);
             float cocoonHaze = exp(-r * r * 8.0);
             float cocoonWing = exp(-pow(abs(across) / (0.06 + 0.24 * uGRBCocoon), 2.0)) * exp(-abs(along) * 1.35);
-            vec3 cocoonCol = vec3(0.62, 0.75, 1.20);
-            outColor += uGRBCocoon * cocoonCol * (1.10 * shockRing + 0.46 * shockRing2 + 0.24 * cocoonHaze + 0.26 * cocoonWing);
+            float axisWake = exp(-pow(abs(across) / (0.05 + 0.18 * uGRBCocoon), 2.0)) * exp(-max(0.0, abs(along) - uGRBShockR * 0.75) * 1.6);
+            vec3 cocoonColEarly = kelvinToRGBLite(12500.0);
+            vec3 cocoonColLate = mix(kelvinToRGBLite(6500.0), vec3(0.86, 0.62, 1.10), 0.40);
+            vec3 cocoonCol = mix(cocoonColEarly, cocoonColLate, softPhase);
+            outColor += uGRBCocoon * cocoonCol * (1.05 * shockRing * ringWarp + 0.50 * shockRing2 + 0.28 * shockRing3 + 0.26 * cocoonHaze + 0.30 * cocoonWing + 0.26 * axisWake);
 
             float luminance = dot(outColor, vec3(0.2126, 0.7152, 0.0722));
             float bloomMask = smoothstep(0.50, 1.7, luminance);
@@ -1394,6 +1437,7 @@
         uniform vec3 uDeformDir;
         uniform float uDeform;
         uniform float uTime;
+        uniform float uBarMode;
         varying vec3 vWorldPos;
         varying vec3 vWorldNormal;
         varying vec3 vLocalPos;
@@ -1416,6 +1460,12 @@
           float face = smoothstep(-0.08, 1.0, par);
           p += d * face * tidal * 0.12;
 
+          // m=2 bar-mode/shear oscillation near contact.
+          float phi = atan(p.y, p.x);
+          float bar = sin(2.0 * (phi - uTime * 1.85));
+          float barAmp = 0.05 * clamp(uBarMode, 0.0, 1.0);
+          p.xy *= vec2(1.0 + barAmp * bar, 1.0 - barAmp * bar);
+
           // Low-amplitude surface agitation for plasma-like granulation.
           p += normal * (0.005 + 0.010 * tidal) * sin(uTime * 1.5 + position.y * 14.0 + position.x * 6.0);
 
@@ -1434,6 +1484,9 @@
         uniform float uIntensity;
         uniform vec3 uBaseColor;
         uniform float uTime;
+        uniform float uRadialVel;
+        uniform float uTidalHeat;
+        uniform vec3 uCompanionDir;
         varying vec3 vWorldPos;
         varying vec3 vWorldNormal;
         varying vec3 vLocalPos;
@@ -1466,11 +1519,37 @@
           return sum;
         }
 
+        vec3 kelvinToRGB(float tempK) {
+          float t = clamp(tempK, 1200.0, 40000.0) / 100.0;
+          float r;
+          float g;
+          float b;
+
+          if (t <= 66.0) {
+            r = 1.0;
+            g = clamp(0.39008158 * log(max(t, 1e-3)) - 0.63184144, 0.0, 1.0);
+          } else {
+            float tt = t - 60.0;
+            r = clamp(1.29293619 * pow(tt, -0.13320476), 0.0, 1.0);
+            g = clamp(1.12989086 * pow(tt, -0.07551485), 0.0, 1.0);
+          }
+
+          if (t >= 66.0) {
+            b = 1.0;
+          } else if (t <= 19.0) {
+            b = 0.0;
+          } else {
+            b = clamp(0.54320679 * log(t - 10.0) - 1.19625409, 0.0, 1.0);
+          }
+
+          return vec3(r, g, b);
+        }
+
         void main() {
           vec3 N = normalize(vWorldNormal);
           vec3 V = normalize(uCamPos - vWorldPos);
-          float mu = max(dot(N, V), 0.0);
-          float limb = 0.72 + 0.28 * pow(mu, 0.35);
+          float mu = clamp(dot(N, V), 0.0, 1.0);
+          float limb = clamp(1.0 - 0.42 * (1.0 - mu) - 0.18 * (1.0 - sqrt(max(mu, 1e-4))), 0.25, 1.0);
           float fres = pow(1.0 - mu, 2.9);
 
           vec2 uv;
@@ -1482,16 +1561,29 @@
           float gran3 = fbm((uv.yx + vec2(0.23, 0.71)) * 620.0 + drift * 21.0);
           float micro = mix(gran1, gran2, 0.45);
           micro = mix(micro, gran3, 0.24);
-          float hotspots = smoothstep(0.72, 0.98, micro);
+          float hotspots = smoothstep(0.74, 0.99, micro);
 
-          vec3 cool = vec3(0.42, 0.66, 1.18);
-          vec3 hot = vec3(1.05, 1.28, 1.95);
-          vec3 thermal = mix(cool, hot, uTemp);
+          float Tphys = mix(6.5e5, 1.6e6, clamp(uTemp, 0.0, 1.0));
+          float logT = clamp((log(Tphys) / log(10.0) - 4.0) / 2.4, 0.0, 1.0);
+          float pseudoK = mix(7600.0, 28000.0, pow(logT, 0.86));
 
-          vec3 col = thermal * (1.05 + micro * 0.42 + hotspots * 0.25);
-          col *= limb;
-          col += vec3(0.23, 0.56, 1.05) * fres * 0.42;
+          float beta = clamp(uRadialVel, -0.22, 0.22);
+          float doppler = sqrt((1.0 + beta) / max(1e-4, 1.0 - beta));
+          float kObs = pseudoK * mix(1.0, doppler, 0.55);
+          vec3 thermal = kelvinToRGB(kObs);
+          float beaming = clamp(pow(doppler, 2.2), 0.72, 1.48);
+
+          vec3 companion = normalize(uCompanionDir + vec3(1e-5));
+          float faceHeat = pow(max(dot(normalize(vLocalPos), companion), 0.0), 3.2);
+          float shear = smoothstep(0.52, 0.90, fbm(uv * 240.0 + vec2(uTime * 0.09, -uTime * 0.06)));
+          float tidalHot = uTidalHeat * (0.75 * faceHeat + 0.35 * shear * faceHeat);
+          vec3 tidalCol = kelvinToRGB(kObs * 1.12);
+
+          vec3 col = thermal * (0.98 + micro * 0.34 + hotspots * 0.20);
+          col *= limb * beaming;
           col = mix(col, col * 1.08 + uBaseColor * 0.25, 0.45);
+          col += tidalCol * tidalHot * 0.75;
+          col += vec3(0.23, 0.56, 1.05) * fres * 0.42;
 
           float outIntensity = mix(1.2, 2.15, clamp(uIntensity, 0.0, 2.2));
           gl_FragColor = vec4(col * outIntensity, 1.0);
@@ -1506,6 +1598,10 @@
         uBaseColor: { value: new THREE.Color(0.58, 0.75, 1.0) },
         uDeformDir: { value: new THREE.Vector3(1, 0, 0) },
         uDeform: { value: 0.0 },
+        uBarMode: { value: 0.0 },
+        uRadialVel: { value: 0.0 },
+        uTidalHeat: { value: 0.0 },
+        uCompanionDir: { value: new THREE.Vector3(1, 0, 0) },
         uTime: { value: 0.0 },
       };
 
@@ -1517,6 +1613,10 @@
           uBaseColor: { value: uniforms.uBaseColor.value.clone() },
           uDeformDir: { value: uniforms.uDeformDir.value.clone() },
           uDeform: { value: uniforms.uDeform.value },
+          uBarMode: { value: uniforms.uBarMode.value },
+          uRadialVel: { value: uniforms.uRadialVel.value },
+          uTidalHeat: { value: uniforms.uTidalHeat.value },
+          uCompanionDir: { value: uniforms.uCompanionDir.value.clone() },
           uTime: { value: uniforms.uTime.value },
         };
       }
@@ -1541,6 +1641,51 @@
       const star2 = new THREE.Mesh(starGeometry, starMat2);
       scene.add(star1);
       scene.add(star2);
+
+      const precursorBridgeVertexShader = /* glsl */ `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `;
+
+      const precursorBridgeFragmentShader = /* glsl */ `
+        precision highp float;
+        uniform float uTime;
+        uniform float uStrength;
+        varying vec2 vUv;
+
+        void main() {
+          float across = abs(vUv.x - 0.5) * 2.0;
+          float along = abs(vUv.y - 0.5) * 2.0;
+          float core = exp(-across * across * 22.0) * (1.0 - smoothstep(0.84, 1.0, along));
+          float filament = 0.62 + 0.38 * sin(vUv.y * 110.0 - uTime * 7.6 + sin(vUv.x * 26.0));
+          float knots = exp(-pow(vUv.y - 0.5 + 0.10 * sin(uTime * 1.9), 2.0) * 24.0) * exp(-across * across * 8.5);
+          float alpha = (core * filament + 0.42 * knots) * uStrength * 0.72;
+          vec3 col = mix(vec3(0.48, 0.70, 1.25), vec3(0.92, 0.82, 1.30), 0.35 + 0.65 * filament);
+          gl_FragColor = vec4(col * alpha * 1.75, alpha);
+        }
+      `;
+
+      const precursorBridge = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.0, 1.0, 1.0, 48, 1, true),
+        new THREE.ShaderMaterial({
+          uniforms: {
+            uTime: { value: 0.0 },
+            uStrength: { value: 0.0 },
+          },
+          vertexShader: precursorBridgeVertexShader,
+          fragmentShader: precursorBridgeFragmentShader,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        })
+      );
+      precursorBridge.visible = false;
+      precursorBridge.frustumCulled = false;
+      scene.add(precursorBridge);
 
       const remnant = new THREE.Mesh(
         new THREE.SphereGeometry(0.34, 48, 48),
@@ -1785,6 +1930,13 @@
       const tmpAxisMinus = new THREE.Vector3();
       const tmpOriginProj = new THREE.Vector3();
       const tmpToCam = new THREE.Vector3();
+      const tmpBridgeDir = new THREE.Vector3();
+      const tmpBridgeMid = new THREE.Vector3();
+      const bridgeUp = new THREE.Vector3(0, 1, 0);
+      const tmpVel1 = new THREE.Vector3();
+      const tmpVel2 = new THREE.Vector3();
+      const tmpView1 = new THREE.Vector3();
+      const tmpView2 = new THREE.Vector3();
       const prevCamPos = camera.position.clone();
       const prevCamQuat = camera.quaternion.clone();
 
@@ -1975,6 +2127,8 @@
 
         const chirpBoost = Math.pow(Math.max(0.04, 1.0 - 0.965 * p), -0.375);
         const phase = 2.0 * Math.PI * (2.0 * p + 5.6 * p * p + 18.0 * Math.pow(p, 4.0)) * mScale;
+        const dPhaseDp = 2.0 * Math.PI * (2.0 + 11.2 * p + 72.0 * Math.pow(p, 3.0)) * mScale;
+        const omega = dPhaseDp / ACT1_DURATION;
 
         const sep = clamp(7.8 - 6.0 * Math.pow(p, 0.76), 2.08, 8.0);
         const r1 = sep * (m2 / mTotal);
@@ -1982,12 +2136,16 @@
 
         const c = Math.cos(phase);
         const s = Math.sin(phase);
-        star1.position.set(c * r1, s * r1, 0.07 * Math.sin(phase * 0.55));
-        star2.position.set(-c * r2, -s * r2, -0.07 * Math.sin(phase * 0.55));
+        const zOsc = 0.07 * Math.sin(phase * 0.55);
+        const zVel = 0.07 * 0.55 * Math.cos(phase * 0.55) * omega;
+        star1.position.set(c * r1, s * r1, zOsc);
+        star2.position.set(-c * r2, -s * r2, -zOsc);
         star1.scale.setScalar(1);
         star2.scale.setScalar(1);
 
         const tidal = clamp(Math.pow(smoothstep(0.50, 1.0, p), 1.05) * 0.92, 0.0, 0.98);
+        const barMode = clamp(Math.pow(smoothstep(0.62, 1.0, p), 1.35) * (0.25 + 0.75 * tidal), 0.0, 1.0);
+        const tidalHeat = clamp(Math.pow(smoothstep(0.70, 1.0, p), 1.20) * (0.35 + 0.65 * tidal), 0.0, 1.0);
         tmpDir12.subVectors(star2.position, star1.position).normalize();
         tmpDir21.copy(tmpDir12).multiplyScalar(-1);
 
@@ -1995,9 +2153,25 @@
         starMat2.uniforms.uDeform.value = tidal;
         starMat1.uniforms.uDeformDir.value.copy(tmpDir12);
         starMat2.uniforms.uDeformDir.value.copy(tmpDir21);
+        starMat1.uniforms.uCompanionDir.value.copy(tmpDir12);
+        starMat2.uniforms.uCompanionDir.value.copy(tmpDir21);
+        starMat1.uniforms.uBarMode.value = barMode;
+        starMat2.uniforms.uBarMode.value = barMode * 0.97;
+        starMat1.uniforms.uTidalHeat.value = tidalHeat;
+        starMat2.uniforms.uTidalHeat.value = tidalHeat * 0.96;
 
-        const temp = clamp(0.35 + 0.58 * smoothstep(0.18, 1.0, p), 0.0, 1.0);
-        const intensity = 0.92 + 0.55 * smoothstep(0.2, 1.0, p) + 0.05 * chirpBoost;
+        tmpVel1.set(-s * r1 * omega, c * r1 * omega, zVel);
+        tmpVel2.set(s * r2 * omega, -c * r2 * omega, -zVel);
+        tmpView1.copy(camera.position).sub(star1.position).normalize();
+        tmpView2.copy(camera.position).sub(star2.position).normalize();
+        const betaScale = 0.022;
+        const radialVel1 = clamp(tmpVel1.dot(tmpView1) * betaScale, -0.18, 0.18);
+        const radialVel2 = clamp(tmpVel2.dot(tmpView2) * betaScale, -0.18, 0.18);
+        starMat1.uniforms.uRadialVel.value = radialVel1;
+        starMat2.uniforms.uRadialVel.value = radialVel2;
+
+        const temp = clamp(0.30 + 0.62 * smoothstep(0.12, 1.0, p), 0.0, 1.0);
+        const intensity = 0.96 + 0.62 * smoothstep(0.2, 1.0, p) + 0.06 * chirpBoost;
         starMat1.uniforms.uTemp.value = temp;
         starMat2.uniforms.uTemp.value = temp * 0.96;
         starMat1.uniforms.uIntensity.value = intensity;
@@ -2012,6 +2186,27 @@
         remnant.visible = false;
         state.remnantFade = 0.0;
 
+        const bridgeStrength = clamp(Math.pow(smoothstep(0.74, 1.0, p), 1.6) * (0.35 + 0.65 * tidal), 0.0, 1.0);
+        if (bridgeStrength > 0.01) {
+          tmpBridgeDir.subVectors(star2.position, star1.position);
+          const bridgeLen = tmpBridgeDir.length();
+          if (bridgeLen > 1e-4) {
+            tmpBridgeMid.copy(star1.position).add(star2.position).multiplyScalar(0.5);
+            precursorBridge.position.copy(tmpBridgeMid);
+            tmpBridgeDir.multiplyScalar(1.0 / bridgeLen);
+            precursorBridge.quaternion.setFromUnitVectors(bridgeUp, tmpBridgeDir);
+            const bridgeRadius = 0.08 + 0.16 * bridgeStrength;
+            precursorBridge.scale.set(bridgeRadius, bridgeLen * 0.97, bridgeRadius);
+            precursorBridge.visible = true;
+            precursorBridge.material.uniforms.uTime.value = elapsed;
+            precursorBridge.material.uniforms.uStrength.value = bridgeStrength;
+          } else {
+            precursorBridge.visible = false;
+          }
+        } else {
+          precursorBridge.visible = false;
+        }
+
         burstMat.uniforms.uOpacity.value = 0.0;
         burstPoints.visible = false;
       }
@@ -2021,6 +2216,7 @@
 
         star1.visible = p < 0.65;
         star2.visible = p < 0.65;
+        precursorBridge.visible = false;
 
         const collapse = 1.0 - smoothstep(0.0, 1.0, p);
         star1.scale.setScalar(0.6 + 0.4 * collapse);
@@ -2045,6 +2241,7 @@
 
         star1.visible = false;
         star2.visible = false;
+        precursorBridge.visible = false;
 
         remnant.visible = false;
         remnant.material.opacity = 0.0;
@@ -2145,7 +2342,10 @@
         let grbDirect = 0.0;
         let grbCocoon = 0.0;
         let grbShockR = 0.0;
+        let grbShockW = 0.04;
+        let grbAge = -1.0;
         if (tSinceMerger >= 0.0) {
+          grbAge = tSinceMerger;
           const directRise = smoothstep(0.02, 0.14, tSinceMerger);
           const directPeak = Math.exp(-Math.pow((tSinceMerger - 0.20) / 0.16, 2.0));
           const directDecay = Math.exp(-Math.max(0.0, tSinceMerger - 0.18) / 0.48);
@@ -2163,6 +2363,7 @@
 
           const shockFront = 0.24 * tSinceMerger / Math.pow(1.0 + tSinceMerger / 2.4, 0.42);
           grbShockR = clamp(0.05 + shockFront, 0.05, 0.86);
+          grbShockW = clamp(0.016 + 0.010 * Math.sqrt(tSinceMerger + 0.02) + 0.030 * grbCocoon, 0.016, 0.095);
         }
         grbDirect = clamp(grbDirect, 0.0, 2.0);
         grbCocoon = clamp(grbCocoon, 0.0, 1.5);
@@ -2202,6 +2403,8 @@
         compUniforms.uGRBDirect.value = grbDirect;
         compUniforms.uGRBCocoon.value = grbCocoon;
         compUniforms.uGRBShockR.value = grbShockR;
+        compUniforms.uGRBShockW.value = grbShockW;
+        compUniforms.uGRBAge.value = grbAge;
 
         tmpOriginProj.copy(origin).project(camera);
         if (tmpOriginProj.z > -1.0 && tmpOriginProj.z < 1.0) {
