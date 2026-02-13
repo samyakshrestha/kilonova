@@ -902,6 +902,7 @@
                 vec3 colAfterglowFar = mix(kelvinToRGB(TagFar), vec3(0.62, 0.86, 1.30), 0.54);
 
                 vec3 transRGB = vec3(1.0);
+                vec3 los = -rd;
                 float t = tNear + jitter;
 
                 for (int i = 0; i < MAX_STEPS; i++) {
@@ -1147,21 +1148,40 @@
                   float vShockNorm = clamp(mix(1.28, 0.56, sedovBlend) * mix(vpScale, veScale, 0.45), 0.35, 1.55);
                   float shockTNorm = clamp(vShockNorm * vShockNorm * (1.0 + 0.35 * collisionCore), 0.20, 2.30);
                   float shockHeat = sqrt(shockTNorm) * (0.78 + 0.22 * phaseBlueLocal);
+                  float shockFresh = exp(-evoLocal * 7.2) * (0.65 + 0.35 * exp(-tDaysLocal / 0.35));
+                  float teRelax = 1.0 - exp(-evoLocal * (5.5 + 3.0 * phaseBlueLocal));
+                  float teFrac = mix(0.36, 1.0, teRelax);
+                  float shockHeatE = shockHeat * teFrac;
+                  float shockNonThermal = shockFresh * (0.45 + 0.55 * collisionCore);
                   float compFS = pow(max(rhoForward, 0.0), 1.65);
                   float compRS = pow(max(rhoRS, 0.0), 1.60);
                   float compCD = pow(max(rhoContact, 0.0), 1.75);
                   float eqTau = uOpacityContrast * pow(max(0.0, 1.0 - abs(n.z)), 1.55) * (0.55 + 0.45 * phaseRedLocal);
                   float shockAtten = exp(-0.42 * eqTau);
+                  float betaShock = clamp(0.08 + 0.10 * vShockNorm, 0.06, 0.24);
+                  vec3 shockFlowDir = normalize(p + n * 0.15 + vec3(1e-6, 1e-6, 1e-6));
+                  float muShock = clamp(dot(shockFlowDir, los), -1.0, 1.0);
+                  float gammaShock = inversesqrt(max(1e-4, 1.0 - betaShock * betaShock));
+                  float dShock = 1.0 / (gammaShock * max(0.22, 1.0 - betaShock * muShock));
+                  float beamShock = clamp(pow(dShock, 2.1), 0.58, 2.55);
                   vec3 colShockFS = mix(kelvinToRGB(15000.0 * vShockNorm), vec3(0.70, 0.90, 1.34), 0.35);
                   vec3 colShockRS = mix(colRSLocal, vec3(1.0, 0.72, 0.92), 0.35);
                   vec3 colShockCD = mix(vec3(0.92, 0.78, 1.26), vec3(1.0, 0.58, 0.35), smoothstep(0.25, 1.0, evoLocal));
+                  vec3 colShockFresh = mix(vec3(1.16, 1.14, 1.28), vec3(0.82, 0.95, 1.30), teRelax);
+                  float betaJet = clamp(0.20 + 0.16 * collisionCore + 0.10 * (uJetIntensity / 3.0), 0.14, 0.46);
+                  vec3 jetFlowDir = normalize(vec3(p.xy * 0.28, p.z + 1e-6));
+                  float muJet = clamp(dot(jetFlowDir, los), -1.0, 1.0);
+                  float gammaJet = inversesqrt(max(1e-4, 1.0 - betaJet * betaJet));
+                  float dJet = 1.0 / (gammaJet * max(0.20, 1.0 - betaJet * muJet));
+                  float beamJet = clamp(pow(dJet, 2.35), 0.56, 3.10);
+                  vec3 colJetDopp = mix(colJetMix * vec3(0.96, 0.92, 0.90), colJetMix * vec3(1.05, 1.08, 1.18), smoothstep(1.0, 1.35, dJet));
 
                   vec3 emiss = vec3(0.0);
                   emiss += rhoP * (1.65 * polarFade + 0.45) * colPolarLocal;
                   emiss += rhoE * (0.45 + 1.15 * eqEmergence) * colEqTransfer;
                   emiss += rhoRS * 1.95 * colRSTransfer;
                   emiss += rhoRT * 1.20 * colRTLocal;
-                  emiss += rhoJet * (2.25 + 0.75 * collisionCore) * colJetMix;
+                  emiss += rhoJet * (2.25 + 0.75 * collisionCore) * colJetDopp * beamJet;
                   emiss += rhoCocoon * (1.15 + 1.10 * collisionCore) * colCocoonMix;
                   emiss += rhoInnerCloud * (1.10 + 0.62 * phaseBlueLocal) * colInnerTransfer;
                   emiss += rhoShockCloud * (1.20 + 0.78 * phaseBlueLocal) * colInnerTransfer;
@@ -1173,9 +1193,10 @@
                   emiss += rhoPhoto * photoBand * (1.15 + 0.25 * phaseBlueLocal) * colPhotoTransfer;
                   emiss += rhoAmbient * 0.55 * vec3(0.92, 0.64, 0.86);
                   emiss += shockRim * (0.72 + 0.52 * collisionCore) * colShockRim;
-                  emiss += compFS * 0.82 * shockHeat * colShockFS * shockAtten;
-                  emiss += compRS * 0.74 * shockHeat * colShockRS * shockAtten;
-                  emiss += compCD * 0.66 * shockHeat * colShockCD * mix(shockAtten, 1.0, 0.35);
+                  emiss += compFS * 0.82 * shockHeatE * colShockFS * shockAtten * beamShock;
+                  emiss += compRS * 0.74 * shockHeatE * colShockRS * shockAtten * beamShock;
+                  emiss += compCD * 0.66 * shockHeatE * colShockCD * mix(shockAtten, 1.0, 0.35) * mix(beamShock, 1.0, 0.35);
+                  emiss += (0.28 * compFS + 0.24 * compRS) * shockNonThermal * colShockFresh * beamShock;
                   float domainFade = 1.0 - smoothstep(boundRadius * 0.84, boundRadius * 1.06, r);
                   emiss *= domainFade;
                   emiss *= heatNormLocal * thermLocal * shockBoost;
@@ -1222,11 +1243,22 @@
                   float frontShadow = mix(0.60, 1.0, pow(transLum, 0.30));
                   emiss *= mix(frontShadow, frontShadow * selfShadow, 0.58);
 
+                  float albedoEq = mix(0.38, 0.20, smoothstep(0.20, 2.20, tauApprox));
+                  float albedoPol = mix(0.78, 0.46, smoothstep(0.20, 2.20, tauApprox));
+                  float albedo = clamp(mix(albedoEq, albedoPol, pole), 0.08, 0.85);
+                  vec3 albedoRGB = clamp(vec3(albedo * 0.80, albedo * 0.95, albedo * 1.08), 0.0, 0.95);
+                  float phaseScat = 0.34 + 0.66 * pow(max(0.0, dot(n, los)), 2.0);
+                  vec3 scatterCol = mix(colPhotoTransfer, mix(colShockFS, colNebTransfer, 0.35), 0.55);
+                  float scatterDensity = rhoForward + 0.72 * rhoContact + 0.52 * rhoCocoon + 0.45 * rhoNebula;
+                  emiss += scatterDensity * (0.07 + 0.22 * albedo) * phaseScat * scatterCol;
+
                   float blueOpacityBoost = 1.16 + 0.82 * lanthCurtain + 0.12 * phaseRedLocal;
                   float greenOpacityBoost = 1.02 + 0.42 * lanthCurtain + 0.06 * phaseRedLocal;
                   float redOpacityBoost = 0.90 + 0.16 * lanthCurtain;
                   vec3 sigmaRGB = sigma * vec3(redOpacityBoost, greenOpacityBoost, blueOpacityBoost);
-                  vec3 alphaRGB = 1.0 - exp(-sigmaRGB * dtEff);
+                  vec3 sigmaScat = sigmaRGB * albedoRGB;
+                  vec3 sigmaAbs = max(sigmaRGB - sigmaScat * 0.62, vec3(1e-6));
+                  vec3 alphaRGB = 1.0 - exp(-sigmaAbs * dtEff);
                   vec3 contrib = emiss * alphaRGB;
                   accum += transRGB * contrib;
                   transRGB *= (vec3(1.0) - alphaRGB);
