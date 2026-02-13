@@ -6,11 +6,13 @@
     <title>Real-Time Kilonova Visualization</title>
     <style>
       :root {
-        --panel-bg: rgba(7, 10, 18, 0.82);
-        --panel-border: rgba(120, 170, 255, 0.24);
-        --text: #e8f0ff;
-        --muted: #9bb1d7;
-        --accent: #8cc7ff;
+        --panel-bg: rgba(6, 11, 24, 0.84);
+        --panel-bg-2: rgba(10, 19, 38, 0.74);
+        --panel-border: rgba(116, 168, 255, 0.34);
+        --text: #eaf2ff;
+        --muted: #a8bfdc;
+        --accent: #9fd6ff;
+        --accent-2: #72b5ff;
       }
 
       html,
@@ -20,7 +22,7 @@
         height: 100%;
         overflow: hidden;
         background: #000;
-        font-family: "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+        font-family: "Avenir Next", "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
         color: var(--text);
       }
 
@@ -36,13 +38,22 @@
         width: min(360px, calc(100vw - 24px));
         max-height: calc(100vh - 64px);
         overflow-y: auto;
-        padding: 12px;
+        padding: 13px 12px 14px;
         border: 1px solid var(--panel-border);
         border-radius: 14px;
-        background: var(--panel-bg);
-        backdrop-filter: blur(8px);
-        box-shadow: 0 10px 34px rgba(0, 0, 0, 0.4);
+        background: linear-gradient(165deg, var(--panel-bg), var(--panel-bg-2));
+        backdrop-filter: blur(14px);
+        box-shadow: 0 16px 44px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(170, 210, 255, 0.08);
         z-index: 10;
+      }
+
+      #ui::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      #ui::-webkit-scrollbar-thumb {
+        background: rgba(132, 183, 255, 0.34);
+        border-radius: 99px;
       }
 
       #settingsToggle {
@@ -50,13 +61,14 @@
         right: 12px;
         top: 12px;
         z-index: 12;
-        border: 1px solid rgba(157, 196, 255, 0.45);
-        border-radius: 10px;
-        padding: 7px 10px;
-        background: rgba(7, 12, 24, 0.82);
+        border: 1px solid rgba(157, 196, 255, 0.55);
+        border-radius: 11px;
+        padding: 7px 11px;
+        background: linear-gradient(180deg, rgba(10, 18, 36, 0.9), rgba(10, 16, 31, 0.82));
         color: #e8f0ff;
         font-size: 12px;
         letter-spacing: 0.02em;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
       }
 
       #ui.collapsed {
@@ -64,9 +76,11 @@
       }
 
       #ui h1 {
-        margin: 0 0 10px;
-        font-size: 16px;
-        letter-spacing: 0.04em;
+        margin: 0 0 11px;
+        font-size: 15px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #d4e8ff;
       }
 
       .row {
@@ -85,8 +99,9 @@
 
       label {
         display: block;
-        margin-top: 8px;
-        font-size: 12px;
+        margin-top: 10px;
+        font-size: 11px;
+        letter-spacing: 0.03em;
         color: var(--muted);
       }
 
@@ -100,11 +115,12 @@
       .value {
         color: var(--accent);
         font-variant-numeric: tabular-nums;
+        font-size: 11px;
       }
 
       input[type="range"] {
         width: 100%;
-        accent-color: #7db6ff;
+        accent-color: var(--accent-2);
       }
 
       button,
@@ -114,32 +130,37 @@
       }
 
       button {
-        border: 1px solid rgba(157, 196, 255, 0.4);
+        border: 1px solid rgba(157, 196, 255, 0.45);
         border-radius: 9px;
         padding: 6px 8px;
-        background: rgba(57, 78, 116, 0.32);
+        background: linear-gradient(180deg, rgba(67, 94, 144, 0.46), rgba(45, 67, 106, 0.38));
         color: var(--text);
+        font-weight: 500;
       }
 
       button:hover {
-        background: rgba(91, 120, 167, 0.35);
+        background: linear-gradient(180deg, rgba(91, 124, 181, 0.55), rgba(60, 84, 127, 0.44));
       }
 
       details {
-        margin-top: 10px;
-        border-top: 1px solid rgba(153, 186, 242, 0.2);
-        padding-top: 8px;
+        margin-top: 12px;
+        border: 1px solid rgba(133, 178, 255, 0.22);
+        border-radius: 10px;
+        padding: 8px 9px 9px;
+        background: rgba(8, 13, 26, 0.42);
       }
 
       summary {
         cursor: pointer;
-        color: #d4e3ff;
-        font-size: 12px;
-        font-weight: 600;
+        color: #d7e7ff;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
       }
 
       .hint {
-        margin: 6px 0 0;
+        margin: 7px 0 0;
         font-size: 11px;
         color: #b2c5e9;
         line-height: 1.3;
@@ -149,19 +170,48 @@
         position: fixed;
         left: 12px;
         top: 12px;
-        padding: 8px 10px;
-        border-radius: 10px;
-        border: 1px solid rgba(140, 182, 255, 0.25);
-        background: rgba(4, 7, 14, 0.7);
-        font-size: 12px;
-        line-height: 1.4;
+        padding: 8px 11px;
+        border-radius: 11px;
+        border: 1px solid rgba(140, 182, 255, 0.32);
+        background: rgba(4, 8, 18, 0.76);
+        font-size: 11px;
         color: #d5e6ff;
         z-index: 10;
         font-variant-numeric: tabular-nums;
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 8px;
+        max-width: calc(100vw - 410px);
+        overflow-x: auto;
       }
 
-      #hud .label {
-        color: #9fb5dc;
+      #hud::-webkit-scrollbar {
+        height: 6px;
+      }
+
+      #hud::-webkit-scrollbar-thumb {
+        background: rgba(132, 182, 255, 0.35);
+        border-radius: 999px;
+      }
+
+      .hud-item {
+        position: relative;
+        padding-right: 11px;
+        color: #d8e8ff;
+        white-space: nowrap;
+      }
+
+      .hud-item:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        right: 2px;
+        top: 50%;
+        width: 4px;
+        height: 4px;
+        margin-top: -2px;
+        border-radius: 999px;
+        background: rgba(124, 174, 255, 0.5);
       }
 
       #bootWarning {
@@ -180,20 +230,6 @@
         line-height: 1.35;
       }
 
-      #legend {
-        position: fixed;
-        left: 12px;
-        bottom: 10px;
-        color: #d2e3ff;
-        font-size: 11px;
-        letter-spacing: 0.02em;
-        z-index: 10;
-        padding: 7px 9px;
-        border-radius: 9px;
-        background: rgba(6, 10, 18, 0.65);
-        border: 1px solid rgba(120, 170, 255, 0.2);
-      }
-
       @media (max-width: 760px) {
         #ui {
           width: calc(100vw - 18px);
@@ -209,15 +245,12 @@
         }
 
         #hud {
-          top: auto;
-          bottom: 9px;
+          top: 9px;
           left: 9px;
-        }
-
-        #legend {
-          left: auto;
-          right: 9px;
-          bottom: 9px;
+          right: 88px;
+          max-width: none;
+          font-size: 10px;
+          gap: 6px;
         }
       }
     </style>
@@ -227,7 +260,7 @@
     <button id="settingsToggle" type="button" aria-expanded="true">Hide Settings ⚙</button>
 
     <div id="ui">
-      <h1>Kilonova - Real-Time Renderer</h1>
+      <h1>Kilonova Parameter Console</h1>
 
       <div class="row buttons">
         <button id="playPause">Pause</button>
@@ -251,19 +284,7 @@
       </label>
 
       <details open>
-        <summary>Camera</summary>
-        <div class="row buttons" style="margin-top: 8px">
-          <button data-preset="wide">Wide</button>
-          <button data-preset="orbital">Orbital</button>
-          <button data-preset="jet">Jet</button>
-          <button data-preset="polar">Polar</button>
-          <button data-preset="equatorial">Equatorial</button>
-        </div>
-        <p class="hint">Mouse controls: drag = orbit, scroll = zoom, right-drag = pan. Use Jet preset for side-on bipolar outflows.</p>
-      </details>
-
-      <details open>
-        <summary>Physical Parameters</summary>
+        <summary>Astrophysical Parameters</summary>
 
         <label>
           <div class="label-top">
@@ -347,7 +368,7 @@
       </details>
 
       <details open>
-        <summary>Rendering</summary>
+        <summary>Imaging Pipeline</summary>
 
         <label>
           <div class="label-top">
@@ -392,15 +413,13 @@
     </div>
 
     <div id="hud">
-      <div id="hudAct"></div>
-      <div id="hudSim"></div>
-      <div id="hudPhys"></div>
-      <div id="hudFPS"></div>
-      <div id="hudQuality"></div>
-      <div id="hudSteps"></div>
+      <div class="hud-item" id="hudAct"></div>
+      <div class="hud-item" id="hudSim"></div>
+      <div class="hud-item" id="hudPhys"></div>
+      <div class="hud-item" id="hudFPS"></div>
+      <div class="hud-item" id="hudQuality"></div>
+      <div class="hud-item" id="hudSteps"></div>
     </div>
-
-    <div id="legend">Act 1: Inspiral | Act 2: Collision | Act 3: Kilonova Expansion</div>
     <div id="bootWarning" hidden>
       Renderer did not initialize. Check browser console for errors and ensure CDN scripts can load.
     </div>
@@ -445,7 +464,7 @@
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x02040a);
       const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.05, 400);
-      camera.position.set(14.0, 4.0, 0.0);
+      camera.position.set(31.0, 6.2, 0.0);
 
       class SimpleOrbitControls {
         constructor(cam, domElement) {
@@ -720,6 +739,32 @@
             return sum;
           }
 
+          vec3 kelvinToRGB(float tempK) {
+            float t = clamp(tempK, 1200.0, 40000.0) / 100.0;
+            float r;
+            float g;
+            float b;
+
+            if (t <= 66.0) {
+              r = 1.0;
+              g = clamp(0.39008158 * log(max(t, 1e-3)) - 0.63184144, 0.0, 1.0);
+            } else {
+              float tt = t - 60.0;
+              r = clamp(1.29293619 * pow(tt, -0.13320476), 0.0, 1.0);
+              g = clamp(1.12989086 * pow(tt, -0.07551485), 0.0, 1.0);
+            }
+
+            if (t >= 66.0) {
+              b = 1.0;
+            } else if (t <= 19.0) {
+              b = 0.0;
+            } else {
+              b = clamp(0.54320679 * log(t - 10.0) - 1.19625409, 0.0, 1.0);
+            }
+
+            return vec3(r, g, b);
+          }
+
           vec2 raySphere(vec3 ro, vec3 rd, float radius) {
             float b = dot(ro, rd);
             float c = dot(ro, ro) - radius * radius;
@@ -781,21 +826,28 @@
                 float jetPersist = uAct < 2.5 ? 1.0 : (0.82 + 0.18 * exp(-evo * 2.6));
                 float jetStrength = uJetIntensity * jetLaunch * jetPersist * (1.20 + 0.55 * collisionCore);
 
-                vec3 colorBlue = vec3(0.71, 0.84, 1.00);
-                vec3 colorPurple = vec3(0.87, 0.56, 1.00);
-                vec3 colorRed = vec3(0.96, 0.42, 0.20);
+                float phaseBlue = 1.0 - smoothstep(0.06, 1.6, tDays);
+                float phasePurple = smoothstep(0.05, 0.9, tDays) * (1.0 - smoothstep(2.2, 5.8, tDays));
+                float phaseRed = smoothstep(0.5, 8.5, tDays);
+                float phaseCloudEarly = smoothstep(0.03, 0.16, tDays) * (1.0 - smoothstep(0.9, 3.2, tDays));
+                float phaseNebula = smoothstep(0.10, 1.8, tDays) * (0.60 + 0.40 * smoothstep(0.22, 0.75, evo));
+
+                float Tpolar = mix(12500.0, 4200.0, smoothstep(0.06, 9.0, tDays));
+                float Teq = mix(7200.0, 2400.0, smoothstep(0.18, 15.0, tDays));
+                float Tcocoon = mix(11000.0, 3800.0, smoothstep(0.08, 7.0, tDays));
+                float TcloudEarly = mix(11500.0, 6200.0, smoothstep(0.04, 1.8, tDays));
+                float TcloudLate = mix(9000.0, 4300.0, smoothstep(0.2, 10.0, tDays));
+
                 vec3 colorJet = vec3(0.67, 0.84, 1.35);
                 vec3 colorJetHot = vec3(1.02, 1.28, 1.86);
-                vec3 colorCocoonBlue = vec3(0.42, 0.61, 1.15);
-                vec3 colorCocoonPurple = vec3(0.80, 0.56, 1.14);
-
-                float pBlueShift = smoothstep(0.18, 0.62, evo);
-                float eRedShift = smoothstep(0.30, 1.00, evo);
-                vec3 colPolar = mix(colorBlue, colorPurple, pBlueShift);
-                vec3 colEq = mix(vec3(0.83, 0.44, 0.62), colorRed, eRedShift);
-                vec3 colRS = vec3(1.00, 0.48, 0.95);
-                vec3 colRT = mix(vec3(0.90, 0.58, 1.00), vec3(1.00, 0.56, 0.28), eRedShift);
-                vec3 colCocoon = mix(colorCocoonBlue, colorCocoonPurple, smoothstep(0.12, 0.90, evo));
+                vec3 colPolar = kelvinToRGB(Tpolar) * mix(1.15, 1.0, phaseRed);
+                vec3 colEq = mix(kelvinToRGB(Teq), vec3(0.98, 0.53, 0.26), 0.45 * phaseRed);
+                vec3 colRS = mix(kelvinToRGB(9500.0), vec3(1.0, 0.64, 0.76), 0.30 * phaseRed);
+                vec3 colRT = mix(vec3(0.90, 0.64, 1.04), vec3(1.00, 0.56, 0.31), smoothstep(0.45, 1.0, evo));
+                vec3 colCocoon = mix(kelvinToRGB(Tcocoon), vec3(0.84, 0.62, 1.06), 0.28 + 0.30 * phasePurple);
+                vec3 colInnerCloud = mix(kelvinToRGB(TcloudEarly), vec3(0.78, 0.96, 1.36), 0.30 * phasePurple);
+                vec3 colNestedShell = mix(kelvinToRGB(TcloudLate), vec3(0.97, 0.58, 0.42), 0.42 * phaseRed);
+                vec3 colNebulaCloud = mix(kelvinToRGB(TcloudLate + 700.0), vec3(0.76, 0.95, 1.28), 0.46);
 
                 float trans = 1.0;
                 float t = tNear + jitter;
@@ -821,7 +873,30 @@
                   float rhoRT = 0.0;
                   float rhoJet = 0.0;
                   float rhoCocoon = 0.0;
-                  float coarseShell = rhoP + rhoE + rhoRS;
+                  float rhoForward = 0.0;
+                  float rhoInnerCloud = 0.0;
+                  float rhoNestedShell = 0.0;
+                  float rhoShockCloud = 0.0;
+                  float rhoNebula = 0.0;
+                  float nestedPhase = smoothstep(0.06, 1.0, evo);
+                  float innerR = mix(0.95, Re * 0.60 + 1.0, nestedPhase);
+                  float innerW = 0.30 + 0.46 * nestedPhase;
+                  float rhoInnerBase = exp(-pow((r - innerR) / innerW, 2.0)) * (0.35 + 0.65 * (1.0 - smoothstep(0.78, 1.0, evo)));
+                  float shockCloudR = mix(0.68, Re * 0.86 + 0.55, smoothstep(0.02, 0.55, evo));
+                  float shockCloudW = 0.34 + 0.58 * smoothstep(0.02, 0.70, evo);
+                  float antiJet = pow(max(0.0, 1.0 - abs(n.z)), 1.05);
+                  float rhoShockCloudBase = exp(-pow((r - shockCloudR) / shockCloudW, 2.0)) * antiJet * phaseCloudEarly;
+                  float nestedR = Rp * (1.20 + 0.42 * nestedPhase);
+                  float nestedW = 0.30 + 0.45 * nestedPhase;
+                  float rhoNestedBase = exp(-pow((r - nestedR) / nestedW, 2.0)) * smoothstep(0.26, 1.0, evo);
+                  float rhoNestedLat = exp(-pow((abs(n.z) - 0.72) / (0.16 + 0.08 * nestedPhase), 2.0));
+                  float rhoNestedBroad = rhoNestedBase * (0.22 + 0.78 * rhoNestedLat);
+                  float nebulaPhaseLocal = smoothstep(0.10, 1.0, evo);
+                  float nebulaR = mix(Re * 0.58 + 0.45, Re * (0.95 + 0.20 * nebulaPhaseLocal), nebulaPhaseLocal);
+                  float nebulaW = 0.55 + 0.95 * nebulaPhaseLocal;
+                  float rhoNebulaBase = exp(-pow((r - nebulaR) / nebulaW, 2.0)) * (0.12 + 0.88 * phaseNebula);
+
+                  float coarseShell = rhoP + rhoE + rhoRS + 0.35 * rhoInnerBase + 0.70 * rhoShockCloudBase + 0.55 * rhoNestedBroad + 0.65 * rhoNebulaBase;
                   float stepMul = 1.0;
                   if (coarseShell < 0.0018) {
                     stepMul = 1.58;
@@ -843,6 +918,11 @@
                     float jetLengthRaw = mix(4.2 + 4.6 * uEnergyScale, Rp * (3.10 + 0.38 * collisionCore), smoothstep(0.0, 0.40, evo));
                     float jetLength = min(jetLengthRaw, boundRadius * 0.88);
                     float beamT = clamp(az / max(jetLength, 1e-3), 0.0, 1.0);
+                    float theta = atan(axisR, max(az, 1e-4));
+                    float thetaCore = max(angle * 0.70, radians(2.0));
+                    float gaussCore = exp(-0.5 * pow(theta / thetaCore, 2.0));
+                    float wing = pow(1.0 + pow(theta / (thetaCore * 1.45), 2.0), -1.15);
+                    float structuredJet = clamp(gaussCore + 0.34 * wing, 0.0, 1.55);
                     float collimation = mix(0.16, 0.52, smoothstep(0.0, 0.75, beamT));
                     float coreWidth = 0.065 + az * tan(angle * collimation);
                     float sheathWidth = coreWidth * (2.2 + 0.7 * (1.0 - beamT));
@@ -852,7 +932,8 @@
                     float along = smoothstep(0.12, 1.0, az) * (1.0 - smoothstep(jetLength, jetLength + (1.4 + 0.8 * evo), az));
                     float jetNoise = 0.58 + 0.42 * fbm(vec3(axisR * 3.1, az * 1.4 + uTime * 0.9, uTime * 0.65), localOctaves);
                     float filament = 0.68 + 0.32 * sin(az * 8.0 - uTime * 3.2 + phi * 4.0);
-                    float jetBeam = (spine * (1.0 + 0.22 * filament) + sheath * 0.55) * along * jetNoise;
+                    float shockTrain = 0.60 + 0.40 * pow(0.5 + 0.5 * sin(beamT * 36.0 - uTime * 5.2), 3.0);
+                    float jetBeam = (spine * (1.0 + 0.22 * filament) + sheath * 0.55) * along * jetNoise * shockTrain;
 
                     float headR = 0.85 + 1.10 * smoothstep(0.0, 1.0, evo);
                     float headNoise = 0.82 + 0.18 * fbm(vec3(axisR * 2.2, az * 0.9 + uTime * 0.28, 1.7), localOctaves);
@@ -864,17 +945,47 @@
                     float cocoonFill = exp(-pow(axisR / (cocoonRadius * (1.25 + 0.30 * collisionCore) + 0.35), 2.0)) * smoothstep(0.4, jetLength * 1.25, az);
                     float cocoonWarp = fbm(vec3(axisR * 1.8, az * 0.9 + uTime * 0.21, uTime * 0.35), localOctaves);
                     float cocoonTurb = 0.70 + 0.30 * sin(cocoonWarp * 8.0 + az * 2.4 - uTime * 0.5);
+                    float breakoutRadius = headR * (1.35 + 0.70 * smoothstep(0.0, 1.0, evo));
+                    float cocoonBreakout = exp(-pow((az - (jetLength + 0.4)) / (0.40 + 0.55 * evo), 2.0)) * exp(-pow((axisR - breakoutRadius) / (0.34 + 0.40 * evo), 2.0));
 
                     float jetTailEnd = min(boundRadius * 1.02, jetLength + 11.0 + Rp * 0.22);
                     float jetCut = 1.0 - smoothstep(jetLength + 3.6, jetTailEnd, az);
-                    rhoJet = (jetBeam + 1.70 * head + 2.10 * hotspot) * jetStrength * jetCut;
-                    rhoCocoon = (1.10 * cocoonShell + 0.70 * cocoonFill + 1.10 * head) * cocoonTurb * (0.90 + 0.82 * collisionCore) * clamp(jetStrength, 0.0, 3.2);
+                    rhoJet = (jetBeam + 1.70 * head + 2.10 * hotspot) * jetStrength * jetCut * structuredJet;
+                    rhoCocoon = (1.10 * cocoonShell + 0.70 * cocoonFill + 1.10 * head + 0.95 * cocoonBreakout) * cocoonTurb * (0.90 + 0.82 * collisionCore) * clamp(jetStrength, 0.0, 3.2);
                   }
 
                   float rhoAmbient = exp(-pow((r - Rp * 1.16) / (thickP * 0.9 + 0.18), 2.0)) * 0.22;
+                  float localOctFast = max(2.0, localOctaves - 1.0);
+                  if (rhoInnerBase > 0.010 || rhoShockCloudBase > 0.008 || rhoNestedBroad > 0.010 || rhoNebulaBase > 0.008) {
+                    float clumpNoise = fbm(p * 2.55 + vec3(0.0, 0.0, uTime * 0.20), localOctFast);
+                    float clumpCells = 0.5 + 0.5 * sin((p.x + p.y + p.z) * 4.5 + uTime * 2.1 + clumpNoise * 8.0);
+                    float clumpMask = smoothstep(0.45, 0.88, clumpNoise) * (0.45 + 0.55 * clumpCells);
+                    rhoInnerCloud = rhoInnerBase * (0.28 + 1.55 * clumpMask);
+                    rhoShockCloud = rhoShockCloudBase * (0.25 + 1.90 * clumpMask);
+
+                    float axisRSoft = length(p.xy);
+                    float shellWarp = 0.72 + 0.28 * fbm(vec3(axisRSoft * 1.35, abs(p.z) * 0.85 + uTime * 0.12, uTime * 0.16), localOctFast);
+                    rhoNestedShell = rhoNestedBroad * shellWarp;
+
+                    float nebNoise = fbm(p * 2.90 + vec3(uTime * 0.14, -uTime * 0.11, uTime * 0.09), localOctFast);
+                    float nebCells = noise3(p * 7.20 + vec3(uTime * 0.21));
+                    float nebMask = smoothstep(0.46, 0.90, nebNoise + 0.55 * nebCells);
+                    float puffBand = 0.58 + 0.42 * sin((r - nebulaR) * 18.0 + nebNoise * 10.0 - uTime * 1.1);
+                    rhoNebula = rhoNebulaBase * (0.20 + 2.20 * nebMask * puffBand);
+                  }
+
+                  float forwardR = Rp * (1.08 + 0.46 * smoothstep(0.02, 1.0, evo));
+                  float forwardShell = exp(-pow((r - forwardR) / (0.24 + 0.42 * evo), 2.0));
+                  float forwardAniso = mix(pow(abs(n.z), 1.30), 1.0, 0.38);
+                  rhoForward = forwardShell * forwardAniso * smoothstep(0.04, 0.98, evo) * (0.85 + 0.55 * collisionCore);
 
                   float eqEmergence = smoothstep(0.20, 0.95, evo);
                   float polarFade = 1.0 - smoothstep(0.28, 0.98, evo);
+                  float jetCool = smoothstep(0.06, 1.0, evo);
+                  float daySoften = smoothstep(0.05, 4.5, tDays);
+                  vec3 colJetSynch = mix(vec3(0.95, 1.12, 1.74), vec3(0.58, 0.80, 1.24), daySoften);
+                  vec3 colJetMix = mix(mix(colorJet, colorJetHot, clamp(0.8 * collisionCore + 0.2 * (1.0 - evo), 0.0, 1.0)), colJetSynch, 0.58 * jetCool);
+                  vec3 colCocoonMix = mix(colCocoon, vec3(0.69, 0.78, 1.16), 0.36 * daySoften);
 
                   float boundaryP = exp(-pow((r - Rp) / (thickP * 0.55 + 1e-3), 2.0));
                   float boundaryE = exp(-pow((r - Re) / (thickE * 0.55 + 1e-3), 2.0));
@@ -885,10 +996,17 @@
                   emiss += rhoE * (0.45 + 1.15 * eqEmergence) * colEq;
                   emiss += rhoRS * 1.95 * colRS;
                   emiss += rhoRT * 1.20 * colRT;
-                  emiss += rhoJet * (2.25 + 0.75 * collisionCore) * mix(colorJet, colorJetHot, clamp(0.8 * collisionCore + 0.2 * (1.0 - evo), 0.0, 1.0));
-                  emiss += rhoCocoon * (1.15 + 1.10 * collisionCore) * colCocoon;
+                  emiss += rhoJet * (2.25 + 0.75 * collisionCore) * colJetMix;
+                  emiss += rhoCocoon * (1.15 + 1.10 * collisionCore) * colCocoonMix;
+                  emiss += rhoInnerCloud * (1.10 + 0.62 * phaseBlue) * colInnerCloud;
+                  emiss += rhoShockCloud * (1.20 + 0.78 * phaseBlue) * colInnerCloud;
+                  emiss += rhoNestedShell * (0.95 + 0.40 * collisionCore) * colNestedShell;
+                  emiss += rhoNebula * (1.05 + 0.55 * phaseBlue) * colNebulaCloud;
+                  emiss += rhoForward * vec3(0.66, 0.86, 1.25);
                   emiss += rhoAmbient * 0.55 * vec3(0.92, 0.64, 0.86);
                   emiss *= heatNorm * shockBoost;
+                  float nebulaNonThermal = (0.14 + 0.26 * exp(-tDays / 9.0)) * phaseNebula;
+                  emiss += rhoNebula * nebulaNonThermal * colNebulaCloud * (0.95 + 0.35 * collisionCore);
 
                   float corePulse = 0.68 + 0.32 * sin(uTime * 9.0);
                   float coreGlow = exp(-pow(r / 0.36, 2.0)) * (0.95 + 0.8 * corePulse) * uRemnantLum;
@@ -909,11 +1027,11 @@
                     emiss += blastHalo * vec3(1.4, 1.1, 1.7);
                   }
 
-                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.33 + rhoCocoon * 0.52 + rhoAmbient * 0.4 + blastHalo * 0.3);
+                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.33 + rhoCocoon * 0.52 + rhoInnerCloud * 0.42 + rhoShockCloud * 0.52 + rhoNestedShell * 0.48 + rhoNebula * 0.56 + rhoForward * 0.28 + rhoAmbient * 0.4 + blastHalo * 0.3);
                   sigma *= opacityScale * densityScale * 0.34;
 
                   float dtEff = dt * stepMul;
-                  if (sigma < 0.0015 && coarseShell < 0.0024 && (rhoJet + rhoCocoon) < 0.0015) {
+                  if (sigma < 0.0015 && coarseShell < 0.0024 && (rhoJet + rhoCocoon + rhoInnerCloud + rhoShockCloud + rhoNestedShell + rhoNebula) < 0.0018) {
                     t += dtEff;
                     continue;
                   }
@@ -1480,19 +1598,19 @@
 
       const params = {
         timeScale: 1.0,
-        m1: 1.35,
-        m2: 1.30,
-        ejectaMass: 0.055,
-        polarVel: 0.30,
-        eqVel: 0.10,
-        opacityContrast: 1.35,
-        rtStrength: 1.1,
-        jetAngle: 9.5,
-        jetIntensity: 1.8,
-        remnantLum: 1.1,
-        bloomStrength: 1.25,
-        chromaticAberration: 0.08,
-        sharpen: 0.65,
+        m1: 1.50,
+        m2: 1.38,
+        ejectaMass: 0.074,
+        polarVel: 0.34,
+        eqVel: 0.118,
+        opacityContrast: 1.56,
+        rtStrength: 1.64,
+        jetAngle: 10.8,
+        jetIntensity: 2.35,
+        remnantLum: 1.58,
+        bloomStrength: 1.62,
+        chromaticAberration: 0.12,
+        sharpen: 0.72,
         autoQuality: false,
         qualityTier: 0,
       };
@@ -1678,45 +1796,12 @@
       });
       refreshQualityControls();
 
-      const presetMap = {
-        wide: {
-          pos: new THREE.Vector3(8.6, 4.2, 12.6),
-          target: new THREE.Vector3(0, 0, 0),
-        },
-        orbital: {
-          pos: new THREE.Vector3(12.5, 3.6, 10.2),
-          target: new THREE.Vector3(0, 0.3, 0),
-        },
-        jet: {
-          pos: new THREE.Vector3(14.0, 4.0, 0.0),
-          target: new THREE.Vector3(0, 0, 0),
-        },
-        polar: {
-          pos: new THREE.Vector3(0.2, 18, 2.4),
-          target: new THREE.Vector3(0, 0, 0),
-        },
-        equatorial: {
-          pos: new THREE.Vector3(16.0, 1.1, 0.2),
-          target: new THREE.Vector3(0, 0, 0),
-        },
-      };
-
-      function applyPreset(name) {
-        const preset = presetMap[name];
-        if (!preset) {
-          return;
-        }
-        camera.position.copy(preset.pos);
-        controls.target.copy(preset.target);
+      function setDefaultCameraView() {
+        camera.position.set(31.0, 6.2, 0.0);
+        controls.target.set(0, 0, 0);
         controls.update();
         state.forceHistoryReset = true;
       }
-
-      document.querySelectorAll("button[data-preset]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          applyPreset(btn.dataset.preset);
-        });
-      });
 
       function updateBurst(collisionTime, totalMassScale) {
         const fade = Math.exp(-collisionTime * 0.6);
@@ -2048,19 +2133,19 @@
         tempUniforms.tHistory.value = volumeHistoryRead.texture;
         compUniforms.tVolume.value = volumeHistoryRead.texture;
 
-        hudAct.textContent = `Current Act: Act ${state.act} - ${actLabel}`;
-        hudSim.textContent = `Simulation Time: t = ${state.simTime.toFixed(1)}s / ${TOTAL_DURATION.toFixed(1)}s`;
+        hudAct.textContent = `Phase: ${actLabel}`;
+        hudSim.textContent = `t_sim: ${state.simTime.toFixed(1)} / ${TOTAL_DURATION.toFixed(1)} s`;
         if (state.act === 3) {
-          hudPhys.textContent = `Physical Time: ~${state.physicalDays.toFixed(1)} days post-merger`;
+          hudPhys.textContent = `Epoch: ${state.physicalDays.toFixed(2)} d post-merger`;
         } else if (state.act === 2) {
-          hudPhys.textContent = "Physical Time: contact to milliseconds post-merger";
+          hudPhys.textContent = "Epoch: contact to 10^3 ms post-merger";
         } else {
-          hudPhys.textContent = "Physical Time: pre-merger inspiral";
+          hudPhys.textContent = "Epoch: terminal pre-merger inspiral";
         }
-        hudFPS.textContent = `FPS (smoothed): ${state.fpsSmooth.toFixed(1)}`;
-        hudQuality.textContent = `Render Quality Tier: ${qualityProfile.name}`;
+        hudFPS.textContent = `FPS: ${state.fpsSmooth.toFixed(1)}`;
+        hudQuality.textContent = `Quality: ${qualityProfile.name}`;
         const effectiveSteps = Math.round(volUniforms.uSteps.value * volUniforms.uStepScale.value);
-        hudSteps.textContent = `Ray March Steps: ${effectiveSteps}`;
+        hudSteps.textContent = `Steps: ${effectiveSteps}`;
       }
 
       function onResize() {
@@ -2088,7 +2173,7 @@
       window.addEventListener("resize", onResize);
 
       setQualityTier(0, true);
-      applyPreset("jet");
+      setDefaultCameraView();
 
       const clock = new THREE.Clock();
       let prevTime = performance.now() * 0.001;
