@@ -796,13 +796,24 @@
             return 0.35 + 0.65 / (1.0 + pow(t / max(tTherm, 1e-3), 0.9));
           }
 
+          float diffusionTimeDays(float massNorm, float vFrac, float kappa, float tTherm) {
+            float m = max(massNorm, 1e-5);
+            float v = max(vFrac, 0.035);
+            float kap = max(kappa, 0.12);
+            float pref = 0.34 + 0.42 * tTherm;
+            return clamp(pref * sqrt((kap * m) / v), 0.05, 14.0);
+          }
+
           float componentTemperature(float massNorm, float vFrac, float tDay, float kappa, float tTherm, float scaleK) {
             float t = max(tDay, 0.03);
             float q = pow(t, -1.3);
+            float tDiff = diffusionTimeDays(massNorm, vFrac, kappa, tTherm);
+            float diffRelease = 1.0 - exp(-pow(t / max(tDiff, 1e-3), 1.18));
+            float photoRecede = smoothstep(0.75 * tDiff, 4.3 * tDiff, t);
             float fth = thermalizationEff(t, tTherm);
-            float lum = max(1e-5, massNorm * q * fth);
-            float r = max(0.35, vFrac * t * 12.0);
-            float reproc = pow(1.0 + kappa * pow(t, 0.28), -0.18);
+            float lum = max(1e-5, massNorm * q * fth * (0.86 + 0.14 * diffRelease));
+            float r = max(0.35, vFrac * t * 12.0 * mix(1.08, 0.74, photoRecede));
+            float reproc = pow(1.0 + kappa * pow(t, 0.28), -0.18) * mix(0.94, 1.05, diffRelease);
             float temp = scaleK * pow(lum / max(r * r, 1e-5), 0.25) * reproc;
             return clamp(temp, 1800.0, 18000.0);
           }
@@ -826,38 +837,56 @@
 
           vec3 pseudoSpectralColor(float tempK, float tauRef, float yE, float recombFrac) {
             float lanth = clamp((0.30 - yE) / 0.16, 0.0, 1.0);
-            float tau0 = max(tauRef, 0.0) * (0.70 + 1.25 * lanth) * (1.0 + 0.46 * recombFrac);
+            float ionized = 1.0 - clamp(recombFrac, 0.0, 1.0);
+            float tau0 = max(tauRef, 0.0) * (0.66 + 1.30 * lanth) * (1.0 + 0.40 * recombFrac);
 
-            float bU = planckBand(tempK, 360.0);
-            float bB = planckBand(tempK, 440.0);
-            float bV = planckBand(tempK, 540.0);
-            float bR = planckBand(tempK, 650.0);
-            float bI = planckBand(tempK, 780.0);
+            // 7-band transport surrogate (UV to NIR) for smoother color evolution.
+            float b1 = planckBand(tempK, 340.0);
+            float b2 = planckBand(tempK, 410.0);
+            float b3 = planckBand(tempK, 480.0);
+            float b4 = planckBand(tempK, 560.0);
+            float b5 = planckBand(tempK, 650.0);
+            float b6 = planckBand(tempK, 780.0);
+            float b7 = planckBand(tempK, 980.0);
 
-            float tU = exp(-tau0 * (1.95 + 0.55 * lanth));
-            float tB = exp(-tau0 * (1.45 + 0.42 * lanth));
-            float tV = exp(-tau0 * (1.05 + 0.22 * lanth));
-            float tR = exp(-tau0 * (0.78 + 0.10 * lanth));
-            float tI = exp(-tau0 * (0.58 + 0.08 * lanth));
+            float k1 = (2.35 + 0.98 * lanth) * (1.0 + 0.52 * recombFrac);
+            float k2 = (1.78 + 0.78 * lanth) * (1.0 + 0.42 * recombFrac);
+            float k3 = (1.26 + 0.56 * lanth) * (1.0 + 0.28 * recombFrac);
+            float k4 = (0.98 + 0.34 * lanth) * (1.0 + 0.16 * recombFrac);
+            float k5 = (0.78 + 0.17 * lanth) * (0.92 + 0.08 * ionized);
+            float k6 = (0.62 + 0.12 * lanth) * (0.90 + 0.10 * ionized);
+            float k7 = (0.48 + 0.09 * lanth) * (0.88 + 0.12 * ionized);
 
-            float fU = bU * tU;
-            float fB = bB * tB;
-            float fV = bV * tV;
-            float fR = bR * tR;
-            float fI = bI * tI;
+            float t1 = exp(-tau0 * k1);
+            float t2 = exp(-tau0 * k2);
+            float t3 = exp(-tau0 * k3);
+            float t4 = exp(-tau0 * k4);
+            float t5 = exp(-tau0 * k5);
+            float t6 = exp(-tau0 * k6);
+            float t7 = exp(-tau0 * k7);
 
-            float absorbedBlue = bU * (1.0 - tU) + 0.85 * bB * (1.0 - tB) + 0.45 * bV * (1.0 - tV);
-            fR += absorbedBlue * (0.22 + 0.42 * recombFrac);
-            fI += absorbedBlue * (0.18 + 0.56 * recombFrac);
+            float f1 = b1 * t1;
+            float f2 = b2 * t2;
+            float f3 = b3 * t3;
+            float f4 = b4 * t4;
+            float f5 = b5 * t5;
+            float f6 = b6 * t6;
+            float f7 = b7 * t7;
+
+            float absorbedBlue = b1 * (1.0 - t1) + 0.92 * b2 * (1.0 - t2) + 0.66 * b3 * (1.0 - t3) + 0.34 * b4 * (1.0 - t4);
+            float lineRedistrib = (0.16 + 0.54 * recombFrac) * (0.58 + 0.42 * lanth);
+            f5 += absorbedBlue * (0.22 + 0.18 * lineRedistrib);
+            f6 += absorbedBlue * (0.18 + 0.24 * lineRedistrib);
+            f7 += absorbedBlue * (0.11 + 0.30 * lineRedistrib);
 
             vec3 rgb;
-            rgb.r = 0.03 * fU + 0.14 * fB + 0.38 * fV + 1.05 * fR + 0.68 * fI;
-            rgb.g = 0.10 * fU + 0.84 * fB + 1.00 * fV + 0.34 * fR + 0.08 * fI;
-            rgb.b = 1.08 * fU + 1.16 * fB + 0.34 * fV + 0.04 * fR + 0.01 * fI;
+            rgb.r = 0.02 * f1 + 0.08 * f2 + 0.24 * f3 + 0.54 * f4 + 1.08 * f5 + 0.78 * f6 + 0.44 * f7;
+            rgb.g = 0.06 * f1 + 0.70 * f2 + 1.05 * f3 + 0.88 * f4 + 0.30 * f5 + 0.09 * f6 + 0.03 * f7;
+            rgb.b = 1.04 * f1 + 1.18 * f2 + 0.66 * f3 + 0.18 * f4 + 0.03 * f5 + 0.01 * f6 + 0.00 * f7;
 
             float lum = max(dot(rgb, vec3(0.2126, 0.7152, 0.0722)), 1e-6);
             rgb /= lum;
-            float sat = mix(0.92, 1.08, smoothstep(2200.0, 9000.0, tempK));
+            float sat = mix(0.90, 1.10, smoothstep(2200.0, 9200.0, tempK));
             rgb = mix(vec3(1.0), rgb, sat);
             return max(rgb, vec3(0.0));
           }
@@ -971,8 +1000,17 @@
                 float tauPolarFar = clamp((kappaPolarFar * massPolar) / max(pow(max(uPolarVel, 0.05) * tDaysFar, 2.0), 1e-4), 0.02, 14.0);
                 float tauEqFar = clamp((kappaEqFar * massEq) / max(pow(max(uEqVel, 0.04) * tDaysFar, 2.0), 1e-4), 0.04, 46.0);
                 float tauCocoonFar = clamp((kappaCocoonFar * massCocoon) / max(pow(max(velCocoon, 0.05) * tDaysFar, 2.0), 1e-4), 0.03, 24.0);
+                float tDiffPolarNear = diffusionTimeDays(massPolar, uPolarVel, kappaPolarNear, 0.9);
+                float tDiffEqNear = diffusionTimeDays(massEq, uEqVel, kappaEqNear, 1.8);
+                float tDiffCocoonNear = diffusionTimeDays(massCocoon, velCocoon, kappaCocoonNear, 1.1);
+                float tDiffPolarFar = diffusionTimeDays(massPolar, uPolarVel, kappaPolarFar, 0.9);
+                float tDiffEqFar = diffusionTimeDays(massEq, uEqVel, kappaEqFar, 1.8);
+                float tDiffCocoonFar = diffusionTimeDays(massCocoon, velCocoon, kappaCocoonFar, 1.1);
+                float tDiffMixNear = tDiffPolarNear * 0.30 + tDiffEqNear * 0.52 + tDiffCocoonNear * 0.18;
+                float tDiffMixFar = tDiffPolarFar * 0.30 + tDiffEqFar * 0.52 + tDiffCocoonFar * 0.18;
                 float collisionCore = uAct < 2.5 ? 1.0 - smoothstep(0.55, 1.0, uAct2Progress) : exp(-evo * 6.5);
                 float viewJetAlign = abs(rd.z);
+                float viewEqSight = pow(max(0.0, 1.0 - abs(rd.z)), 1.15);
                 float promptBeam = pow(viewJetAlign, 2.6);
                 float promptVisibility = mix(0.44, 1.0, promptBeam);
                 float jetLaunch = uAct < 2.5 ? (0.40 + 0.60 * uAct2Progress) : (1.0 - 0.35 * smoothstep(0.0, 1.0, evo));
@@ -1016,15 +1054,17 @@
                 float LcocoonFar = massCocoon * pow(tDaysFar, -1.3) * thermalizationEff(tDaysFar, 1.2);
                 float LsumNear = max(1e-5, LpolarNear + LeqNear + LcocoonNear);
                 float LsumFar = max(1e-5, LpolarFar + LeqFar + LcocoonFar);
-                float wBlueNear = clamp((LpolarNear / LsumNear) * exp(-(0.12 + 0.20 * lanthPolarNear) * tauPolarNear), 0.0, 1.0);
-                float wRedNear = clamp((LeqNear / LsumNear) * (1.0 - exp(-(0.06 + 0.18 * lanthEqNear) * tauEqNear)) + 0.10 * (LcocoonNear / LsumNear) * (0.55 + 0.45 * lanthCocoonNear), 0.0, 1.0);
+                float eqBlanketViewNear = 1.0 + 0.46 * viewEqSight * lanthEqNear;
+                float eqBlanketViewFar = 1.0 + 0.46 * viewEqSight * lanthEqFar;
+                float wBlueNear = clamp((LpolarNear / LsumNear) * exp(-(0.12 + 0.20 * lanthPolarNear) * tauPolarNear * eqBlanketViewNear), 0.0, 1.0);
+                float wRedNear = clamp((LeqNear / LsumNear) * (1.0 - exp(-(0.06 + 0.18 * lanthEqNear) * tauEqNear * (0.90 + 0.25 * viewEqSight))) + 0.10 * (LcocoonNear / LsumNear) * (0.55 + 0.45 * lanthCocoonNear), 0.0, 1.0);
                 float wPurpleNear = clamp((LcocoonNear / LsumNear) * exp(-(0.05 + 0.12 * lanthCocoonNear) * tauCocoonNear) + 0.48 * sqrt(max(wBlueNear * wRedNear, 0.0)), 0.0, 1.0);
                 float wNormNear = max(wBlueNear + wPurpleNear + wRedNear, 1e-4);
                 wBlueNear /= wNormNear;
                 wPurpleNear /= wNormNear;
                 wRedNear /= wNormNear;
-                float wBlueFar = clamp((LpolarFar / LsumFar) * exp(-(0.12 + 0.20 * lanthPolarFar) * tauPolarFar), 0.0, 1.0);
-                float wRedFar = clamp((LeqFar / LsumFar) * (1.0 - exp(-(0.06 + 0.18 * lanthEqFar) * tauEqFar)) + 0.10 * (LcocoonFar / LsumFar) * (0.55 + 0.45 * lanthCocoonFar), 0.0, 1.0);
+                float wBlueFar = clamp((LpolarFar / LsumFar) * exp(-(0.12 + 0.20 * lanthPolarFar) * tauPolarFar * eqBlanketViewFar), 0.0, 1.0);
+                float wRedFar = clamp((LeqFar / LsumFar) * (1.0 - exp(-(0.06 + 0.18 * lanthEqFar) * tauEqFar * (0.90 + 0.25 * viewEqSight))) + 0.10 * (LcocoonFar / LsumFar) * (0.55 + 0.45 * lanthCocoonFar), 0.0, 1.0);
                 float wPurpleFar = clamp((LcocoonFar / LsumFar) * exp(-(0.05 + 0.12 * lanthCocoonFar) * tauCocoonFar) + 0.48 * sqrt(max(wBlueFar * wRedFar, 0.0)), 0.0, 1.0);
                 float wNormFar = max(wBlueFar + wPurpleFar + wRedFar, 1e-4);
                 wBlueFar /= wNormFar;
@@ -1055,12 +1095,16 @@
                 float thermNear = clamp(pow(max(TlumNear, 1600.0) / 12500.0, 0.58), 0.16, 1.0);
                 float thermFar = clamp(pow(max(TlumFar, 1600.0) / 12500.0, 0.58), 0.16, 1.0);
 
-                float recedeNear = smoothstep(0.05, 5.0, tDays) * (0.45 + 0.55 * mNorm);
-                float recedeFar = smoothstep(0.05, 5.0, tDaysFar) * (0.45 + 0.55 * mNorm);
-                float RphNear = mix(Rp * 0.98, Re * (0.62 + 0.16 * (1.0 - mNorm)) + 0.70, recedeNear);
-                float RphFar = mix(Rp * 0.98, Re * (0.62 + 0.16 * (1.0 - mNorm)) + 0.70, recedeFar);
-                float WphNear = mix(0.62, 0.34, recedeNear);
-                float WphFar = mix(0.62, 0.34, recedeFar);
+                float recedeNear = smoothstep(0.44 * tDiffMixNear, 4.0 * tDiffMixNear, tDays) * (0.45 + 0.55 * mNorm);
+                float recedeFar = smoothstep(0.44 * tDiffMixFar, 4.0 * tDiffMixFar, tDaysFar) * (0.45 + 0.55 * mNorm);
+                float RphPolNear = max(0.35, uPolarVel * tDays * 12.0 * mix(1.10, 0.78, recedeNear));
+                float RphEqNear = max(0.35, uEqVel * tDays * 12.0 * mix(1.06, 0.66, recedeNear));
+                float RphPolFar = max(0.35, uPolarVel * tDaysFar * 12.0 * mix(1.10, 0.78, recedeFar));
+                float RphEqFar = max(0.35, uEqVel * tDaysFar * 12.0 * mix(1.06, 0.66, recedeFar));
+                float RphNear = mix(Rp * 0.98, mix(RphPolNear, RphEqNear, 0.60) + 0.62, recedeNear);
+                float RphFar = mix(Rp * 0.98, mix(RphPolFar, RphEqFar, 0.60) + 0.62, recedeFar);
+                float WphNear = mix(0.66, 0.30 + 0.10 * smoothstep(0.0, 1.0, recedeNear), recedeNear);
+                float WphFar = mix(0.66, 0.30 + 0.10 * smoothstep(0.0, 1.0, recedeFar), recedeFar);
 
                 vec3 colorJet = vec3(0.67, 0.84, 1.35);
                 vec3 colorJetHot = vec3(1.02, 1.28, 1.86);
@@ -1129,6 +1173,7 @@
 
                 vec3 transRGB = vec3(1.0);
                 vec3 los = -rd;
+                float viewEquatorial = pow(max(0.0, 1.0 - abs(los.z)), 1.10);
                 float t = tNear + jitter;
 
                 for (int i = 0; i < MAX_STEPS; i++) {
@@ -1142,12 +1187,25 @@
                   float ltMix = clamp((t - tNear) / totalDist, 0.0, 1.0);
                   float act2Local = clamp(uAct2Progress - ltMix * 0.18, 0.0, 1.0);
                   float evoLocal = clamp(evo - ltMix * (0.06 + 0.08 * evo), 0.0, 1.0);
-                  float tDaysLocal = mix(tDays, tDaysFar, ltMix);
+                  float tDaysBase = mix(tDays, tDaysFar, ltMix);
+                  float arrivalAniso = 0.5 - 0.5 * dot(n, los);
+                  float arrivalRadial = smoothstep(0.10 * boundRadius, 0.96 * boundRadius, r);
+                  float arrivalDelay = maxLtDelay * arrivalAniso * arrivalRadial * 0.52;
+                  float tDaysLocal = max(0.03, tDaysBase - arrivalDelay);
                   float heatNormLocal = mix(heatNormNear, heatNormFar, ltMix);
                   float thermLocal = mix(thermNear, thermFar, ltMix);
                   float phaseBlueLocal = mix(phaseBlueNear, phaseBlueFar, ltMix);
                   float phasePurpleLocal = mix(phasePurpleNear, phasePurpleFar, ltMix);
                   float phaseRedLocal = mix(phaseRedNear, phaseRedFar, ltMix);
+                  float phaseRetard = clamp((tDaysBase - tDaysLocal) / max(tDaysBase, 0.08), 0.0, 0.80);
+                  phaseBlueLocal = clamp(phaseBlueLocal + 0.42 * phaseRetard * (1.0 - phaseBlueLocal), 0.0, 1.0);
+                  phasePurpleLocal = clamp(phasePurpleLocal + 0.20 * phaseRetard * (1.0 - phasePurpleLocal), 0.0, 1.0);
+                  phaseRedLocal = clamp(phaseRedLocal * (1.0 - 0.52 * phaseRetard), 0.0, 1.0);
+                  float pLocalNorm = max(phaseBlueLocal + phasePurpleLocal + phaseRedLocal, 1e-4);
+                  phaseBlueLocal /= pLocalNorm;
+                  phasePurpleLocal /= pLocalNorm;
+                  phaseRedLocal /= pLocalNorm;
+                  float evoLocalRet = clamp(evoLocal - 0.18 * phaseRetard, 0.0, 1.0);
                   float phaseCloudEarlyLocal = mix(phaseCloudEarlyNear, phaseCloudEarlyFar, ltMix);
                   float phaseNebulaLocal = mix(phaseNebulaNear, phaseNebulaFar, ltMix);
 
@@ -1163,7 +1221,7 @@
                   vec3 colAfterglowLocal = mix(colAfterglowNear, colAfterglowFar, ltMix);
                   float RphLocal = mix(RphNear, RphFar, ltMix);
                   float WphLocal = mix(WphNear, WphFar, ltMix);
-                  float evoSh = clamp(evoLocal, 0.0, 1.0);
+                  float evoSh = clamp(evoLocalRet, 0.0, 1.0);
                   float sedovBlend = smoothstep(0.18, 0.95, evoSh);
                   float shockProgFree = pow(max(evoSh, 1e-4), 0.92);
                   float shockProgSedov = pow(max(evoSh, 1e-4), 0.62);
@@ -1336,9 +1394,9 @@
                   float forwardAniso = mix(pow(abs(n.z), 1.20), 1.0, 0.44);
                   float reverseAniso = mix(0.74 * equa + 0.30 * pole, 0.66 * equa, 0.35);
                   float contactAniso = mix(0.62 + 0.38 * equa, 0.62 + 0.38 * pole, 0.28);
-                  rhoForward = max(rhoForward, forwardShell * forwardAniso * smoothstep(0.04, 0.98, evoLocal) * (0.88 + 0.52 * collisionCore));
-                  rhoContact = max(rhoContact, contactShell * contactAniso * smoothstep(0.06, 1.0, evoLocal) * (0.75 + 0.44 * collisionCore));
-                  rhoRS = max(rhoRS, reverseShell * reverseAniso * smoothstep(0.05, 1.0, evoLocal) * (0.84 + 0.46 * collisionCore));
+                  rhoForward = max(rhoForward, forwardShell * forwardAniso * smoothstep(0.04, 0.98, evoLocalRet) * (0.88 + 0.52 * collisionCore));
+                  rhoContact = max(rhoContact, contactShell * contactAniso * smoothstep(0.06, 1.0, evoLocalRet) * (0.75 + 0.44 * collisionCore));
+                  rhoRS = max(rhoRS, reverseShell * reverseAniso * smoothstep(0.05, 1.0, evoLocalRet) * (0.84 + 0.46 * collisionCore));
                   float fsWakeIn = exp(-max(0.0, RfsLocal - r) / max(fsWidthLocal * (2.2 + 1.1 * sedovBlend), 1e-3));
                   float fsWakeOut = exp(-max(0.0, r - RfsLocal) / max(fsWidthLocal * (3.6 + 1.6 * sedovBlend), 1e-3));
                   float fsWake = (0.30 * fsWakeIn + 0.16 * fsWakeOut) * forwardAniso * smoothstep(0.03, 1.0, evoSh);
@@ -1375,7 +1433,8 @@
                   float yEWindLocal = mix(yEWindNear, yEWindFar, ltMix);
                   float lanthFracLocal = smoothstep(0.30, 0.18, yEWindLocal);
                   float lanthCurtain = clamp((0.25 + 1.05 * lanthFracLocal) * equa * (0.42 + 0.58 * smoothstep(0.20, 1.0, evoSh)) * uOpacityContrast, 0.0, 2.3);
-                  vec3 lanthTransfer = vec3(1.0 + 0.16 * lanthCurtain, 1.0 - 0.02 * lanthCurtain, 1.0 - 0.28 * lanthCurtain);
+                  float lineBlanket = lanthCurtain * (0.70 + 0.58 * equa) * (0.82 + 0.30 * viewEquatorial);
+                  vec3 lanthTransfer = vec3(1.0 + 0.14 * lineBlanket, 1.0 - 0.03 * lineBlanket, 1.0 - 0.34 * lineBlanket);
                   vec3 colEqTransfer = colEqLocal * lanthTransfer;
                   vec3 colRSTransfer = colRSLocal * mix(vec3(1.0), lanthTransfer, 0.20);
                   vec3 colInnerTransfer = colInnerLocal * mix(vec3(1.0), lanthTransfer, 0.45);
@@ -1415,7 +1474,7 @@
                   compFS *= shockTemporal;
                   compRS *= shockTemporal;
                   compCD *= shockTemporal;
-                  float eqTau = uOpacityContrast * pow(max(0.0, 1.0 - abs(n.z)), 1.55) * (0.55 + 0.45 * phaseRedLocal);
+                  float eqTau = uOpacityContrast * pow(max(0.0, 1.0 - abs(n.z)), 1.55) * (0.55 + 0.45 * phaseRedLocal) * (1.0 + 0.22 * lineBlanket);
                   float shockAtten = exp(-0.42 * eqTau);
                   float betaShock = clamp(0.08 + 0.10 * vShockNorm, 0.06, 0.24);
                   vec3 shockFlowDir = normalize(p + n * 0.15 + vec3(1e-6, 1e-6, 1e-6));
@@ -1434,6 +1493,8 @@
                   float dJet = 1.0 / (gammaJet * max(0.20, 1.0 - betaJet * muJet));
                   float beamJet = clamp(pow(dJet, 2.35), 0.56, 3.10);
                   vec3 colJetDopp = mix(colJetMix * vec3(0.96, 0.92, 0.90), colJetMix * vec3(1.05, 1.08, 1.18), smoothstep(1.0, 1.35, dJet));
+                  // Slightly stronger veil attenuation for better late-time visibility.
+                  float diffuseVeilAtten = mix(0.94, 0.62, smoothstep(0.12, 0.95, tDaysLocal));
 
                   vec3 emiss = vec3(0.0);
                   emiss += rhoP * (1.65 * polarFade + 0.45) * colPolarLocal;
@@ -1448,12 +1509,12 @@
                   emiss += rhoInnerCloud * (1.05 + 0.50 * phaseBlueLocal + 0.20 * phasePurpleLocal) * mix(colInnerTransfer, colCocoonMix, 0.24 * phasePurpleLocal);
                   emiss += rhoShockCloud * (1.10 + 0.70 * phaseBlueLocal + 0.16 * phasePurpleLocal) * mix(colInnerTransfer, cloudChrom, 0.28);
                   emiss += rhoNestedShell * (0.95 + 0.40 * collisionCore + 0.20 * phaseRedLocal) * mix(colNestedTransfer, colRTLocal, 0.16 * phasePurpleLocal);
-                  emiss += rhoNebula * (1.00 + 0.45 * phaseBlueLocal + 0.34 * phasePurpleLocal) * mix(colNebTransfer, cloudChrom, 0.55);
+                  emiss += rhoNebula * diffuseVeilAtten * (0.86 + 0.34 * phaseBlueLocal + 0.26 * phasePurpleLocal) * mix(colNebTransfer, cloudChrom, 0.46);
                   emiss += rhoForward * vec3(0.66, 0.86, 1.25);
                   emiss += rhoContact * mix(vec3(0.90, 0.78, 1.18), vec3(0.98, 0.62, 0.42), smoothstep(0.35, 1.0, evoLocal)) * (0.78 + 0.32 * collisionCore);
                   emiss += rhoAfterglow * (0.88 + 0.32 * phaseBlueLocal) * colAfterglowLocal;
                   emiss += rhoPhoto * photoBand * (1.15 + 0.25 * phaseBlueLocal) * colPhotoTransfer;
-                  emiss += rhoAmbient * 0.55 * vec3(0.92, 0.64, 0.86);
+                  emiss += rhoAmbient * (0.44 * diffuseVeilAtten) * vec3(0.92, 0.64, 0.86);
                   emiss += shockRim * (0.72 + 0.52 * collisionCore) * colShockRim;
                   emiss += compFS * 0.82 * shockHeatE * colShockFS * shockAtten * beamShock;
                   emiss += compRS * 0.74 * shockHeatE * colShockRS * shockAtten * beamShock;
@@ -1462,8 +1523,8 @@
                   float domainFade = 1.0 - smoothstep(boundRadius * 0.84, boundRadius * 1.06, r);
                   emiss *= domainFade;
                   emiss *= heatNormLocal * thermLocal * shockBoost;
-                  float nebulaNonThermal = (0.14 + 0.26 * exp(-tDaysLocal / 9.0)) * phaseNebulaLocal;
-                  emiss += rhoNebula * nebulaNonThermal * colNebTransfer * (0.95 + 0.35 * collisionCore);
+                  float nebulaNonThermal = (0.14 + 0.26 * exp(-tDaysLocal / 9.0)) * phaseNebulaLocal * diffuseVeilAtten;
+                  emiss += rhoNebula * nebulaNonThermal * colNebTransfer * (0.82 + 0.30 * collisionCore);
 
                   float corePulse = 0.68 + 0.32 * sin(uTime * 9.0);
                   float coreGlow = exp(-pow(r / 0.36, 2.0)) * (0.95 + 0.8 * corePulse) * uRemnantLum;
@@ -1491,7 +1552,7 @@
                     emiss += blastHalo * vec3(1.4, 1.1, 1.7);
                   }
 
-                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.33 + rhoCocoon * 0.52 + rhoInnerCloud * 0.42 + rhoShockCloud * 0.52 + rhoNestedShell * 0.48 + rhoNebula * 0.56 + rhoAfterglow * 0.34 + rhoPhoto * 0.46 + rhoForward * 0.34 + rhoContact * 0.40 + rhoAmbient * 0.4 + blastHalo * 0.3);
+                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.33 + rhoCocoon * 0.52 + rhoInnerCloud * 0.42 + rhoShockCloud * 0.52 + rhoNestedShell * 0.48 + rhoNebula * (0.46 * diffuseVeilAtten) + rhoAfterglow * 0.34 + rhoPhoto * 0.46 + rhoForward * 0.34 + rhoContact * 0.40 + rhoAmbient * (0.34 * diffuseVeilAtten) + blastHalo * 0.3);
                   sigma *= opacityScale * densityScale * 0.34;
 
                   float dtEff = dt * stepMul;
@@ -1514,13 +1575,13 @@
                   float hgBack = hgPhase(muScat, -0.12);
                   float phaseScat = clamp((0.72 * hgForward + 0.28 * hgBack) / 0.07957747, 0.10, 3.20);
                   vec3 scatterCol = mix(colPhotoTransfer, mix(colShockFS, colNebTransfer, 0.35), 0.55);
-                  float scatterDensity = rhoForward + 0.72 * rhoContact + 0.52 * rhoCocoon + 0.45 * rhoNebula;
+                  float scatterDensity = rhoForward + 0.72 * rhoContact + 0.52 * rhoCocoon + 0.32 * rhoNebula * diffuseVeilAtten;
                   emiss += scatterDensity * (0.07 + 0.22 * albedo) * phaseScat * scatterCol;
 
                   float lanthIon = 0.55 + 0.45 * smoothstep(0.15, 4.5, tDaysLocal);
-                  float blueOpacityBoost = 1.08 + (0.92 * lanthCurtain + 0.20 * phaseRedLocal) * lanthIon;
-                  float greenOpacityBoost = 1.00 + (0.52 * lanthCurtain + 0.08 * phaseRedLocal) * (0.78 + 0.22 * lanthIon);
-                  float redOpacityBoost = 0.92 + 0.22 * lanthCurtain * (0.52 + 0.48 * lanthIon);
+                  float blueOpacityBoost = 1.08 + (0.98 * lineBlanket + 0.20 * phaseRedLocal) * lanthIon;
+                  float greenOpacityBoost = 1.00 + (0.58 * lineBlanket + 0.08 * phaseRedLocal) * (0.78 + 0.22 * lanthIon);
+                  float redOpacityBoost = 0.90 + 0.24 * lineBlanket * (0.52 + 0.48 * lanthIon);
                   vec3 sigmaRGB = sigma * vec3(redOpacityBoost, greenOpacityBoost, blueOpacityBoost);
                   vec3 sigmaScat = sigmaRGB * albedoRGB;
                   vec3 sigmaAbs = max(sigmaRGB - sigmaScat * 0.62, vec3(1e-6));
@@ -1605,6 +1666,7 @@
           uChromAb: { value: 0.08 },
           uSharpen: { value: 0.65 },
           uGRBDirect: { value: 0.0 },
+          uGRBPrompt: { value: 0.0 },
           uGRBCocoon: { value: 0.0 },
           uGRBShockR: { value: 0.0 },
           uGRBShockW: { value: 0.04 },
@@ -1630,6 +1692,7 @@
           uniform float uChromAb;
           uniform float uSharpen;
           uniform float uGRBDirect;
+          uniform float uGRBPrompt;
           uniform float uGRBCocoon;
           uniform float uGRBShockR;
           uniform float uGRBShockW;
@@ -1757,6 +1820,18 @@
             outColor += uGRBDirect * promptCol * (2.0 * promptCore + 1.65 * promptLine + 0.30 * promptHalo + 0.42 * promptSheath);
             outColor += uGRBDirect * mix(vec3(0.68, 0.88, 1.48), vec3(0.56, 0.74, 1.18), softPhase) * (0.42 * promptEdge);
 
+            // Prompt detector saturation proxy: very short and strongly axis-collimated.
+            float promptSatCore = exp(-r * r * 78.0);
+            float promptSatHalo = exp(-r * r * 5.4);
+            float promptSatAxisFalloff = max(26.0, 150.0 - 70.0 * clamp(uGRBPrompt, 0.0, 2.5));
+            float promptSatAxis = exp(-abs(across) * promptSatAxisFalloff) * exp(-abs(along) * 1.15);
+            float promptSatEdge = exp(-pow(abs(across) / (0.04 + 0.11 * hardPhase), 2.0)) * exp(-abs(along) * 1.0);
+            float promptDisc = exp(-pow(r / (0.06 + 0.03 * hardPhase), 2.0));
+            vec3 satHard = kelvinToRGBLite(28000.0);
+            vec3 satSoft = kelvinToRGBLite(12000.0);
+            vec3 satCol = mix(satHard, satSoft, 1.0 - hardPhase);
+            outColor += uGRBPrompt * satCol * (2.40 * promptSatCore + 1.15 * promptSatHalo + 1.75 * promptSatAxis + 0.42 * promptSatEdge + 0.85 * promptDisc);
+
             float shockW = max(uGRBShockW, 1e-4);
             float az = atan(d.y, d.x);
             float ringWarp = 0.88 + 0.12 * sin(az * 11.0 + r * 38.0 - grbAge * 5.4);
@@ -1769,19 +1844,34 @@
             vec3 cocoonColEarly = kelvinToRGBLite(12500.0);
             vec3 cocoonColLate = mix(kelvinToRGBLite(6500.0), vec3(0.86, 0.62, 1.10), 0.40);
             vec3 cocoonCol = mix(cocoonColEarly, cocoonColLate, softPhase);
-            outColor += uGRBCocoon * cocoonCol * (1.05 * shockRing * ringWarp + 0.50 * shockRing2 + 0.28 * shockRing3 + 0.26 * cocoonHaze + 0.30 * cocoonWing + 0.26 * axisWake);
+            // Cocoon becomes optically thinner with expansion; suppress broad late-time veil.
+            float cocoonBroadFade = exp(-grbAge / 1.15);
+            float cocoonNarrowFade = exp(-grbAge / 2.0);
+            float cocoonShockFade = exp(-grbAge / 1.7);
+            float cocoonHazeTerm = cocoonHaze * cocoonBroadFade;
+            float cocoonWingTerm = cocoonWing * cocoonNarrowFade;
+            float axisWakeTerm = axisWake * cocoonNarrowFade;
+            outColor += uGRBCocoon * cocoonCol * (
+              1.00 * shockRing * ringWarp +
+              0.44 * shockRing2 * cocoonShockFade +
+              0.24 * shockRing3 +
+              0.09 * cocoonHazeTerm +
+              0.16 * cocoonWingTerm +
+              0.12 * axisWakeTerm
+            );
 
             float luminance = luminanceOf(outColor);
             float bloomThreshold = mix(0.56, 0.90, smoothstep(0.8, 4.0, luminance));
             float bloomMask = smoothstep(bloomThreshold, bloomThreshold + 1.45, luminance);
             float act2BloomSupp = uAct < 2.5 ? (0.72 + 0.28 * uAct2Progress) : 1.0;
+            float act3VeilCut = uAct > 2.5 ? 0.70 : 1.0;
             float bloomLimiter = 1.0 / (1.0 + 0.24 * luminance);
-            vec3 bloomSeed = blurBase + volumeColor * (0.20 * act2BloomSupp + 0.08);
+            vec3 bloomSeed = blurBase + volumeColor * ((0.20 * act2BloomSupp + 0.08) * act3VeilCut);
             vec3 bloomColor = bloomSeed * bloomMask * (0.84 * uBloomStrength) * bloomLimiter;
             vec3 chromaRef = outColor / max(luminance, 1e-5);
             float bloomLum = luminanceOf(bloomColor);
             bloomColor = mix(bloomColor, chromaRef * bloomLum, 0.58);
-            outColor += bloomColor + volumeColor * ((0.10 + 0.05 * act2BloomSupp) * uBloomStrength * bloomLimiter);
+            outColor += bloomColor + volumeColor * (((0.10 + 0.05 * act2BloomSupp) * act3VeilCut) * uBloomStrength * bloomLimiter);
             outColor = compressHighlights(outColor);
 
             gl_FragColor = vec4(max(outColor, vec3(0.0)), 1.0);
@@ -2151,6 +2241,63 @@
         }
       `;
 
+      const starfieldVertexShader = /* glsl */ `
+        precision highp float;
+        attribute float aSize;
+        attribute float aPhase;
+        attribute float aLum;
+        varying vec3 vColor;
+        varying float vPhase;
+        varying float vLum;
+        uniform float uBaseSize;
+        uniform float uScale;
+        uniform float uTime;
+
+        void main() {
+          vColor = color;
+          vPhase = aPhase;
+          vLum = aLum;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float dist = max(1.0, -mv.z);
+          // No atmospheric twinkle in space; only a very subtle sensor-like scintillation.
+          float scint = 1.0 + 0.018 * aLum * sin(uTime * 0.12 + aPhase * 1.37);
+          gl_PointSize = uBaseSize * aSize * uScale * scint / dist;
+          gl_Position = projectionMatrix * mv;
+        }
+      `;
+
+      const starfieldFragmentShader = /* glsl */ `
+        precision highp float;
+        varying vec3 vColor;
+        varying float vPhase;
+        varying float vLum;
+        uniform float uOpacity;
+        uniform float uSoftness;
+        uniform float uCoreBoost;
+        uniform float uTime;
+
+        void main() {
+          vec2 uv = gl_PointCoord * 2.0 - 1.0;
+          float r2 = dot(uv, uv);
+          if (r2 > 1.0) {
+            discard;
+          }
+
+          float r = sqrt(r2);
+          float core = exp(-r2 * (10.0 + uSoftness * 2.4 + 2.5 * vLum)) * (uCoreBoost + 0.45 * vLum);
+          float halo = exp(-r2 * (2.2 + uSoftness * 0.95));
+          float airy = exp(-pow(r - 0.52, 2.0) * 92.0) * (0.06 + 0.12 * vLum);
+          float spikeX = exp(-abs(uv.y) * 20.0) * exp(-abs(uv.x) * 1.65);
+          float spikeY = exp(-abs(uv.x) * 20.0) * exp(-abs(uv.y) * 1.65);
+          float spikes = (spikeX + spikeY) * smoothstep(0.72, 1.18, vLum) * 0.34;
+
+          float flicker = 1.0 + 0.02 * vLum * sin(uTime * 0.27 + vPhase * 1.1 + r * 9.0);
+          float alpha = (0.58 * halo + 1.08 * core + airy + spikes) * uOpacity * flicker;
+          vec3 col = vColor * (0.52 * halo + 1.30 * core + 0.72 * airy + 0.88 * spikes);
+          gl_FragColor = vec4(col, alpha);
+        }
+      `;
+
       const burstCount = 2600;
       const burstPositions = new Float32Array(burstCount * 3);
       const burstVel = new Float32Array(burstCount * 3);
@@ -2243,25 +2390,131 @@
       }
       initBurstDirections();
 
-      const starfieldCount = 2200;
+      const starfieldCount = 4600;
       const starfieldPositions = new Float32Array(starfieldCount * 3);
       const starfieldColor = new Float32Array(starfieldCount * 3);
       const starfieldSize = new Float32Array(starfieldCount);
       const starfieldPhase = new Float32Array(starfieldCount);
+      const starfieldLum = new Float32Array(starfieldCount);
+
+      function kelvinToRGBJS(tempK) {
+        const t = Math.max(1200.0, Math.min(40000.0, tempK)) / 100.0;
+        let r = 1.0;
+        let g = 1.0;
+        let b = 1.0;
+
+        if (t <= 66.0) {
+          r = 1.0;
+          g = Math.max(0.0, Math.min(1.0, 0.39008158 * Math.log(Math.max(t, 1e-3)) - 0.63184144));
+        } else {
+          const tt = t - 60.0;
+          r = Math.max(0.0, Math.min(1.0, 1.29293619 * Math.pow(tt, -0.13320476)));
+          g = Math.max(0.0, Math.min(1.0, 1.12989086 * Math.pow(tt, -0.07551485)));
+        }
+
+        if (t >= 66.0) {
+          b = 1.0;
+        } else if (t <= 19.0) {
+          b = 0.0;
+        } else {
+          b = Math.max(0.0, Math.min(1.0, 0.54320679 * Math.log(t - 10.0) - 1.19625409));
+        }
+
+        return [r, g, b];
+      }
+
+      function sampleStellarTemperature() {
+        const u = Math.random();
+        if (u < 0.76) {
+          return 2600 + Math.random() * 1800; // M dwarfs (dominant in number)
+        }
+        if (u < 0.88) {
+          return 3900 + Math.random() * 1200; // K
+        }
+        if (u < 0.95) {
+          return 5200 + Math.random() * 900; // G
+        }
+        if (u < 0.985) {
+          return 6100 + Math.random() * 1600; // F
+        }
+        if (u < 0.997) {
+          return 7600 + Math.random() * 2600; // A
+        }
+        if (u < 0.9995) {
+          return 11000 + Math.random() * 8000; // B
+        }
+        return 22000 + Math.random() * 14000; // O (very rare)
+      }
+
+      function randNormal() {
+        const u1 = Math.max(1e-6, Math.random());
+        const u2 = Math.random();
+        return Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+      }
+
+      const galPole = new THREE.Vector3(0.24, 0.94, 0.24).normalize();
+      const galRef = Math.abs(galPole.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+      const galU = new THREE.Vector3().crossVectors(galRef, galPole).normalize();
+      const galV = new THREE.Vector3().crossVectors(galPole, galU).normalize();
+
+      const GOLDEN_FRAC = 0.6180339887498949;
       for (let i = 0; i < starfieldCount; i++) {
         const i3 = i * 3;
-        const r = 80 + Math.random() * 240;
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(2 * Math.random() - 1);
-        starfieldPositions[i3 + 0] = r * Math.sin(phi) * Math.cos(theta);
-        starfieldPositions[i3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-        starfieldPositions[i3 + 2] = r * Math.cos(phi);
+        // Mild Milky-Way anisotropy, but with near-even sky coverage.
+        const inDisk = Math.random() < 0.62;
+        let dx;
+        let dy;
+        let dz;
+        if (inDisk) {
+          const frac = i * GOLDEN_FRAC - Math.floor(i * GOLDEN_FRAC);
+          const lon = (frac + (Math.random() - 0.5) * 0.06 + 1.0) % 1.0 * Math.PI * 2.0;
+          const sigma = Math.random() < 0.78 ? 0.20 : 0.38;
+          let lat = randNormal() * sigma;
+          lat = Math.max(-1.12, Math.min(1.12, lat));
+          const cLat = Math.cos(lat);
+          const a = Math.cos(lon) * cLat;
+          const b = Math.sin(lon) * cLat;
+          const c = Math.sin(lat);
+          dx = galU.x * a + galV.x * b + galPole.x * c;
+          dy = galU.y * a + galV.y * b + galPole.y * c;
+          dz = galU.z * a + galV.z * b + galPole.z * c;
+        } else {
+          // Quasi-uniform spherical sequence to avoid visible clumping.
+          const seqU = (i + 0.5) / starfieldCount;
+          const z = 1.0 - 2.0 * seqU + (Math.random() - 0.5) * (1.4 / starfieldCount);
+          const theta = Math.PI * 2.0 * ((i * GOLDEN_FRAC + 0.37) % 1.0);
+          const rr = Math.sqrt(Math.max(0.0, 1.0 - z * z));
+          dx = rr * Math.cos(theta);
+          dy = rr * Math.sin(theta);
+          dz = z;
+        }
 
-        const tint = Math.random();
-        starfieldColor[i3 + 0] = 0.70 + 0.28 * tint;
-        starfieldColor[i3 + 1] = 0.76 + 0.22 * (1.0 - tint * 0.65);
-        starfieldColor[i3 + 2] = 0.95 + 0.05 * Math.random();
-        starfieldSize[i] = 0.55 + Math.pow(Math.random(), 1.8) * 1.95;
+        const dirLenInv = 1.0 / Math.max(1e-6, Math.hypot(dx, dy, dz));
+        dx *= dirLenInv;
+        dy *= dirLenInv;
+        dz *= dirLenInv;
+
+        const radius = inDisk ? 100.0 + Math.pow(Math.random(), 0.58) * 315.0 : 155.0 + Math.pow(Math.random(), 0.56) * 260.0;
+        starfieldPositions[i3 + 0] = dx * radius;
+        starfieldPositions[i3 + 1] = dy * radius;
+        starfieldPositions[i3 + 2] = dz * radius;
+
+        const tK = sampleStellarTemperature();
+        const rgb = kelvinToRGBJS(tK);
+        const planeAlign = Math.abs(dx * galPole.x + dy * galPole.y + dz * galPole.z);
+        const dust = inDisk ? (1.0 - Math.min(1.0, planeAlign / 0.45)) * (0.06 + 0.20 * Math.random()) : 0.0;
+
+        const rr = rgb[0] * (1.0 - 0.22 * dust) + 1.00 * (0.22 * dust);
+        const gg = rgb[1] * (1.0 - 0.22 * dust) + 0.72 * (0.22 * dust);
+        const bb = rgb[2] * (1.0 - 0.28 * dust) + 0.48 * (0.28 * dust);
+
+        const lum = Math.min(1.25, 0.08 + 0.72 * Math.pow(Math.random(), 3.3) + 0.62 * Math.pow(Math.random(), 19.0));
+        const colorGain = 0.64 + 0.64 * Math.pow(lum, 0.74);
+        starfieldColor[i3 + 0] = rr * colorGain;
+        starfieldColor[i3 + 1] = gg * colorGain;
+        starfieldColor[i3 + 2] = bb * colorGain;
+        starfieldLum[i] = lum;
+        starfieldSize[i] = 0.46 + lum * (0.86 + 0.72 * Math.pow(Math.random(), 1.7));
         starfieldPhase[i] = Math.random() * Math.PI * 2.0;
       }
       const starfieldGeom = new THREE.BufferGeometry();
@@ -2269,17 +2522,18 @@
       starfieldGeom.setAttribute("color", new THREE.BufferAttribute(starfieldColor, 3));
       starfieldGeom.setAttribute("aSize", new THREE.BufferAttribute(starfieldSize, 1));
       starfieldGeom.setAttribute("aPhase", new THREE.BufferAttribute(starfieldPhase, 1));
+      starfieldGeom.setAttribute("aLum", new THREE.BufferAttribute(starfieldLum, 1));
       const starfieldMat = new THREE.ShaderMaterial({
         uniforms: {
           uTime: { value: 0.0 },
-          uOpacity: { value: 0.82 },
-          uBaseSize: { value: 34.0 },
+          uOpacity: { value: 0.95 },
+          uBaseSize: { value: 40.0 },
           uScale: { value: Math.min(window.devicePixelRatio, 2.0) },
-          uSoftness: { value: 1.65 },
-          uCoreBoost: { value: 1.05 },
+          uSoftness: { value: 1.28 },
+          uCoreBoost: { value: 1.20 },
         },
-        vertexShader: pointSpriteVertexShader,
-        fragmentShader: pointSpriteFragmentShader,
+        vertexShader: starfieldVertexShader,
+        fragmentShader: starfieldFragmentShader,
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
@@ -2816,18 +3070,32 @@
         const directAngleWeight = smoothstep(Math.cos(jetOpen + THREE.MathUtils.degToRad(8.0)), Math.cos(jetOpen), cosViewAxis);
 
         let grbDirect = 0.0;
+        let grbPrompt = 0.0;
         let grbCocoon = 0.0;
+        let grbPromptKick = 0.0;
         let grbShockR = 0.0;
         let grbShockW = 0.04;
         let grbAge = -1.0;
         if (tSinceMerger >= 0.0) {
           grbAge = tSinceMerger;
+          const promptAngle = Math.pow(directAngleWeight, 0.9);
           const directRise = smoothstep(0.02, 0.14, tSinceMerger);
           const directPeak = Math.exp(-Math.pow((tSinceMerger - 0.20) / 0.16, 2.0));
           const directDecay = Math.exp(-Math.max(0.0, tSinceMerger - 0.18) / 0.48);
           const promptTemporal = directRise * directDecay * (0.62 + 0.38 * directPeak);
-          const promptAngle = Math.pow(directAngleWeight, 0.9);
           grbDirect = promptTemporal * promptAngle * massScale * (1.20 + 0.18 * params.jetIntensity);
+
+          const promptSpikeRise = smoothstep(0.004, 0.045, tSinceMerger);
+          const promptSpikePeak = Math.exp(-Math.pow((tSinceMerger - 0.07) / 0.055, 2.0));
+          const promptSpikeTail = Math.exp(-Math.max(0.0, tSinceMerger - 0.06) / 0.18);
+          const promptSpike = promptSpikeRise * (0.68 * promptSpikePeak + 0.32 * promptSpikeTail);
+          grbPrompt = promptSpike * promptAngle * massScale * (1.22 + 0.20 * params.jetIntensity);
+
+          // Ultra-brief prompt saturation proxy (detector overwhelm near merger only).
+          const promptKickPeak = Math.exp(-Math.pow((tSinceMerger - 0.050) / 0.020, 2.0));
+          const promptKickGate = smoothstep(0.0, 0.030, tSinceMerger) * (1.0 - smoothstep(0.11, 0.22, tSinceMerger));
+          grbPromptKick = promptKickPeak * promptKickGate * promptAngle * massScale * (1.85 + 0.26 * params.jetIntensity);
+          grbPrompt += grbPromptKick;
 
           const cocoonRise = smoothstep(0.05, 0.70, tSinceMerger);
           const cocoonPlateau = 1.0 - smoothstep(3.4, 6.4, tSinceMerger);
@@ -2842,10 +3110,14 @@
           grbShockW = clamp(0.016 + 0.010 * Math.sqrt(tSinceMerger + 0.02) + 0.030 * grbCocoon, 0.016, 0.095);
         }
         grbDirect = clamp(grbDirect, 0.0, 2.0);
+        grbPrompt = clamp(grbPrompt, 0.0, 3.2);
         grbCocoon = clamp(grbCocoon, 0.0, 1.5);
 
         const flash = state.act === 2 ? Math.exp(-state.act2Progress * 8.8) * (2.0 * massScale) : 0.0;
-        const exposureTarget = clamp(1.02 - flash * 0.15 + grbDirect * 0.06 + grbCocoon * 0.03, 0.78, 1.16);
+        const promptOverwhelm = clamp(grbPromptKick * 0.70, 0.0, 1.8);
+        const exposureBase = 1.02 - flash * 0.15 + grbDirect * 0.06 + grbCocoon * 0.03;
+        const exposureMax = 1.16 + 0.08 * smoothstep(0.0, 0.9, grbPrompt) + 0.14 * promptOverwhelm;
+        const exposureTarget = clamp(exposureBase + grbPrompt * 0.10 + 0.12 * promptOverwhelm, 0.78, exposureMax);
         state.exposureSmooth = THREE.MathUtils.lerp(state.exposureSmooth, exposureTarget, 0.08);
         renderer.toneMappingExposure = state.exposureSmooth;
 
@@ -2873,12 +3145,14 @@
         volUniforms.uRemnantLum.value = state.act === 2 ? params.remnantLum * state.remnantFade : 0.0;
 
         const act2BloomScale = state.act === 2 ? (0.80 + 0.20 * state.act2Progress) : 1.0;
-        compUniforms.uBloomStrength.value = params.bloomStrength * act2BloomScale;
+        const promptBloomBoost = 1.0 + 0.48 * Math.min(1.8, grbPrompt) + 0.70 * promptOverwhelm;
+        compUniforms.uBloomStrength.value = params.bloomStrength * act2BloomScale * promptBloomBoost;
         compUniforms.uAct.value = state.act;
         compUniforms.uAct2Progress.value = state.act2Progress;
         compUniforms.uChromAb.value = params.chromaticAberration;
         compUniforms.uSharpen.value = params.sharpen;
         compUniforms.uGRBDirect.value = grbDirect;
+        compUniforms.uGRBPrompt.value = grbPrompt;
         compUniforms.uGRBCocoon.value = grbCocoon;
         compUniforms.uGRBShockR.value = grbShockR;
         compUniforms.uGRBShockW.value = grbShockW;
