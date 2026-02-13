@@ -259,7 +259,7 @@
           <button data-preset="polar">Polar</button>
           <button data-preset="equatorial">Equatorial</button>
         </div>
-        <p class="hint">Mouse controls: drag = orbit, scroll = zoom, right-drag = pan. Use Jet preset to inspect bipolar outflows.</p>
+        <p class="hint">Mouse controls: drag = orbit, scroll = zoom, right-drag = pan. Use Jet preset for side-on bipolar outflows.</p>
       </details>
 
       <details open>
@@ -445,7 +445,7 @@
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x02040a);
       const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.05, 400);
-      camera.position.set(8.6, 4.2, 12.6);
+      camera.position.set(14.0, 4.0, 0.0);
 
       class SimpleOrbitControls {
         constructor(cam, domElement) {
@@ -840,7 +840,8 @@
                     float angle = radians(max(3.0, uJetAngle));
                     float axisR = length(p.xy);
                     float az = abs(p.z);
-                    float jetLength = mix(3.2 + 3.6 * uEnergyScale, Rp * (2.55 + 0.28 * collisionCore), smoothstep(0.0, 0.46, evo));
+                    float jetLengthRaw = mix(4.2 + 4.6 * uEnergyScale, Rp * (3.10 + 0.38 * collisionCore), smoothstep(0.0, 0.40, evo));
+                    float jetLength = min(jetLengthRaw, boundRadius * 0.88);
                     float beamT = clamp(az / max(jetLength, 1e-3), 0.0, 1.0);
                     float collimation = mix(0.16, 0.52, smoothstep(0.0, 0.75, beamT));
                     float coreWidth = 0.065 + az * tan(angle * collimation);
@@ -849,20 +850,23 @@
                     float spine = exp(-pow(axisR / max(coreWidth, 1e-4), 2.0));
                     float sheath = max(exp(-pow(axisR / max(sheathWidth, 1e-4), 2.0)) - spine, 0.0);
                     float along = smoothstep(0.12, 1.0, az) * (1.0 - smoothstep(jetLength, jetLength + (1.4 + 0.8 * evo), az));
-                    float jetNoise = 0.58 + 0.42 * fbm(vec3(axisR * 3.1, p.z * 1.4 + uTime * 0.9, uTime * 0.65), localOctaves);
+                    float jetNoise = 0.58 + 0.42 * fbm(vec3(axisR * 3.1, az * 1.4 + uTime * 0.9, uTime * 0.65), localOctaves);
                     float filament = 0.68 + 0.32 * sin(az * 8.0 - uTime * 3.2 + phi * 4.0);
                     float jetBeam = (spine * (1.0 + 0.22 * filament) + sheath * 0.55) * along * jetNoise;
 
                     float headR = 0.85 + 1.10 * smoothstep(0.0, 1.0, evo);
-                    float head = exp(-pow((az - jetLength) / (0.34 + 0.48 * evo), 2.0)) * exp(-pow(axisR / headR, 2.0));
-                    float hotspot = exp(-pow((az - jetLength) / (0.18 + 0.20 * evo), 2.0)) * exp(-pow(axisR / (0.36 + 0.28 * evo), 2.0));
+                    float headNoise = 0.82 + 0.18 * fbm(vec3(axisR * 2.2, az * 0.9 + uTime * 0.28, 1.7), localOctaves);
+                    float head = exp(-pow((az - jetLength) / (0.34 + 0.48 * evo), 2.0)) * exp(-pow(axisR / headR, 2.0)) * headNoise;
+                    float hotspot = exp(-pow((az - jetLength) / (0.18 + 0.20 * evo), 2.0)) * exp(-pow(axisR / (0.36 + 0.28 * evo), 2.0)) * headNoise;
 
                     float cocoonRadius = az * tan(angle * 1.45) + 0.22;
                     float cocoonShell = exp(-pow((axisR - cocoonRadius) / (0.20 + 0.30 * evo), 2.0)) * smoothstep(0.35, jetLength * 1.3, az);
                     float cocoonFill = exp(-pow(axisR / (cocoonRadius * (1.25 + 0.30 * collisionCore) + 0.35), 2.0)) * smoothstep(0.4, jetLength * 1.25, az);
-                    float cocoonTurb = 0.65 + 0.35 * sin(warp * 8.0 + az * 2.4 - uTime * 0.5);
+                    float cocoonWarp = fbm(vec3(axisR * 1.8, az * 0.9 + uTime * 0.21, uTime * 0.35), localOctaves);
+                    float cocoonTurb = 0.70 + 0.30 * sin(cocoonWarp * 8.0 + az * 2.4 - uTime * 0.5);
 
-                    float jetCut = 1.0 - smoothstep(jetLength + 2.0, jetLength + 5.0 + Rp * 0.15, az);
+                    float jetTailEnd = min(boundRadius * 1.02, jetLength + 11.0 + Rp * 0.22);
+                    float jetCut = 1.0 - smoothstep(jetLength + 3.6, jetTailEnd, az);
                     rhoJet = (jetBeam + 1.70 * head + 2.10 * hotspot) * jetStrength * jetCut;
                     rhoCocoon = (1.10 * cocoonShell + 0.70 * cocoonFill + 1.10 * head) * cocoonTurb * (0.90 + 0.82 * collisionCore) * clamp(jetStrength, 0.0, 3.2);
                   }
@@ -977,6 +981,11 @@
           uBloomStrength: { value: 1.25 },
           uChromAb: { value: 0.08 },
           uSharpen: { value: 0.65 },
+          uGRBDirect: { value: 0.0 },
+          uGRBCocoon: { value: 0.0 },
+          uGRBShockR: { value: 0.0 },
+          uGRBCenter: { value: new THREE.Vector2(0.5, 0.5) },
+          uGRBAxisDir: { value: new THREE.Vector2(1.0, 0.0) },
           uStarScreen1: { value: new THREE.Vector2(-10, -10) },
           uStarScreen2: { value: new THREE.Vector2(-10, -10) },
           uStarVis1: { value: 0.0 },
@@ -995,6 +1004,11 @@
           uniform float uBloomStrength;
           uniform float uChromAb;
           uniform float uSharpen;
+          uniform float uGRBDirect;
+          uniform float uGRBCocoon;
+          uniform float uGRBShockR;
+          uniform vec2 uGRBCenter;
+          uniform vec2 uGRBAxisDir;
           uniform vec2 uStarScreen1;
           uniform vec2 uStarScreen2;
           uniform float uStarVis1;
@@ -1055,6 +1069,25 @@
             vec3 outColor = sceneColor + volumeColor;
             outColor += starAura(vUv, uStarScreen1, uStarVis1);
             outColor += starAura(vUv, uStarScreen2, uStarVis2);
+
+            vec2 d = vUv - uGRBCenter;
+            float r = length(d);
+            vec2 axis = normalize(uGRBAxisDir + vec2(1e-5, 0.0));
+            vec2 nAxis = vec2(-axis.y, axis.x);
+            float along = dot(d, axis);
+            float across = dot(d, nAxis);
+
+            float promptCore = exp(-r * r * 220.0);
+            float promptLine = exp(-abs(across) * 230.0) * exp(-abs(along) * 3.2);
+            float promptHalo = exp(-r * r * 20.0);
+            vec3 promptCol = vec3(1.02, 1.10, 1.35);
+            outColor += uGRBDirect * promptCol * (2.0 * promptCore + 1.65 * promptLine + 0.30 * promptHalo);
+
+            float shockW = 0.020 + 0.045 * uGRBCocoon;
+            float shockRing = exp(-pow((r - uGRBShockR) / max(shockW, 1e-4), 2.0));
+            float cocoonHaze = exp(-r * r * 8.0);
+            vec3 cocoonCol = vec3(0.62, 0.75, 1.20);
+            outColor += uGRBCocoon * cocoonCol * (1.2 * shockRing + 0.22 * cocoonHaze);
 
             float luminance = dot(outColor, vec3(0.2126, 0.7152, 0.0722));
             float bloomMask = smoothstep(0.50, 1.7, luminance);
@@ -1487,6 +1520,10 @@
       const tmpProj1 = new THREE.Vector3();
       const tmpProj2 = new THREE.Vector3();
       const origin = new THREE.Vector3(0, 0, 0);
+      const tmpAxisPlus = new THREE.Vector3();
+      const tmpAxisMinus = new THREE.Vector3();
+      const tmpOriginProj = new THREE.Vector3();
+      const tmpToCam = new THREE.Vector3();
       const prevCamPos = camera.position.clone();
       const prevCamQuat = camera.quaternion.clone();
 
@@ -1651,7 +1688,7 @@
           target: new THREE.Vector3(0, 0.3, 0),
         },
         jet: {
-          pos: new THREE.Vector3(10.8, 6.8, 8.4),
+          pos: new THREE.Vector3(14.0, 4.0, 0.0),
           target: new THREE.Vector3(0, 0, 0),
         },
         polar: {
@@ -1672,6 +1709,7 @@
         camera.position.copy(preset.pos);
         controls.target.copy(preset.target);
         controls.update();
+        state.forceHistoryReset = true;
       }
 
       document.querySelectorAll("button[data-preset]").forEach((btn) => {
@@ -1864,8 +1902,39 @@
           updateExpansion(elapsed, state.actTime, massScale);
         }
 
+        let tSinceMerger = -1.0;
+        if (state.act === 2) {
+          tSinceMerger = state.actTime;
+        } else if (state.act === 3) {
+          tSinceMerger = ACT2_DURATION + state.actTime;
+        }
+
+        tmpToCam.copy(camera.position).sub(origin).normalize();
+        const cosViewAxis = Math.abs(tmpToCam.z);
+        const jetOpen = THREE.MathUtils.degToRad(Math.max(3.0, params.jetAngle));
+        const directAngleWeight = smoothstep(Math.cos(jetOpen + THREE.MathUtils.degToRad(8.0)), Math.cos(jetOpen), cosViewAxis);
+
+        let grbDirect = 0.0;
+        let grbCocoon = 0.0;
+        let grbShockR = 0.0;
+        if (tSinceMerger >= 0.0) {
+          const directCore = Math.exp(-Math.pow((tSinceMerger - 0.22) / 0.18, 2.0));
+          const directTail = Math.exp(-tSinceMerger / 0.55) * (1.0 - smoothstep(1.1, 2.0, tSinceMerger));
+          grbDirect = (directCore + 0.36 * directTail) * directAngleWeight * massScale * 1.35;
+
+          const cocoonRise = smoothstep(0.05, 0.55, tSinceMerger);
+          const cocoonMain = 1.0 - smoothstep(2.8, 4.8, tSinceMerger);
+          const cocoonTail = 0.35 * Math.exp(-Math.max(0.0, tSinceMerger - 1.0) / 2.2);
+          const cocoonTemporal = cocoonRise * cocoonMain + cocoonTail;
+          const cocoonAngleWeight = 0.66 + 0.34 * (1.0 - directAngleWeight);
+          grbCocoon = cocoonTemporal * cocoonAngleWeight * massScale * 0.92;
+          grbShockR = clamp(0.06 + 0.10 * tSinceMerger + 0.025 * tSinceMerger * tSinceMerger, 0.06, 0.72);
+        }
+        grbDirect = clamp(grbDirect, 0.0, 2.0);
+        grbCocoon = clamp(grbCocoon, 0.0, 1.4);
+
         const flash = state.act === 2 ? Math.exp(-state.act2Progress * 8.8) * (2.0 * massScale) : 0.0;
-        renderer.toneMappingExposure = 1.0 + flash * 0.32;
+        renderer.toneMappingExposure = 1.0 + flash * 0.32 + grbDirect * 0.34 + grbCocoon * 0.14;
 
         const volUniforms = volumeMaterial.uniforms;
         const compUniforms = compositeMaterial.uniforms;
@@ -1896,6 +1965,27 @@
         compUniforms.uAct2Progress.value = state.act2Progress;
         compUniforms.uChromAb.value = params.chromaticAberration;
         compUniforms.uSharpen.value = params.sharpen;
+        compUniforms.uGRBDirect.value = grbDirect;
+        compUniforms.uGRBCocoon.value = grbCocoon;
+        compUniforms.uGRBShockR.value = grbShockR;
+
+        tmpOriginProj.copy(origin).project(camera);
+        if (tmpOriginProj.z > -1.0 && tmpOriginProj.z < 1.0) {
+          compUniforms.uGRBCenter.value.set(tmpOriginProj.x * 0.5 + 0.5, tmpOriginProj.y * 0.5 + 0.5);
+        } else {
+          compUniforms.uGRBCenter.value.set(0.5, 0.5);
+        }
+
+        tmpAxisPlus.set(0, 0, 1).project(camera);
+        tmpAxisMinus.set(0, 0, -1).project(camera);
+        const ax = tmpAxisPlus.x - tmpAxisMinus.x;
+        const ay = tmpAxisPlus.y - tmpAxisMinus.y;
+        const alen = Math.hypot(ax, ay);
+        if (alen > 1e-5) {
+          compUniforms.uGRBAxisDir.value.set(ax / alen, ay / alen);
+        } else {
+          compUniforms.uGRBAxisDir.value.set(1.0, 0.0);
+        }
 
         let stepScale = 1.0;
         let noiseScale = 1.0;
@@ -1998,7 +2088,7 @@
       window.addEventListener("resize", onResize);
 
       setQualityTier(0, true);
-      applyPreset("wide");
+      applyPreset("jet");
 
       const clock = new THREE.Clock();
       let prevTime = performance.now() * 0.001;
@@ -2022,6 +2112,9 @@
         const camQuatDot = clamp(Math.abs(camera.quaternion.dot(prevCamQuat)), 0.0, 1.0);
         const camAngDelta = 2.0 * Math.acos(camQuatDot);
         state.cameraMotion = camPosDelta + camAngDelta * 3.5;
+        if (camPosDelta > 0.0022 || camAngDelta > 0.0022) {
+          state.forceHistoryReset = true;
+        }
         prevCamPos.copy(camera.position);
         prevCamQuat.copy(camera.quaternion);
 
