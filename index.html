@@ -255,10 +255,11 @@
         <div class="row buttons" style="margin-top: 8px">
           <button data-preset="wide">Wide</button>
           <button data-preset="orbital">Orbital</button>
+          <button data-preset="jet">Jet</button>
           <button data-preset="polar">Polar</button>
           <button data-preset="equatorial">Equatorial</button>
         </div>
-        <p class="hint">Mouse controls: drag = orbit, scroll = zoom, right-drag = pan.</p>
+        <p class="hint">Mouse controls: drag = orbit, scroll = zoom, right-drag = pan. Use Jet preset to inspect bipolar outflows.</p>
       </details>
 
       <details open>
@@ -444,7 +445,7 @@
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x02040a);
       const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.05, 400);
-      camera.position.set(0, 2.8, 14.8);
+      camera.position.set(8.6, 4.2, 12.6);
 
       class SimpleOrbitControls {
         constructor(cam, domElement) {
@@ -627,8 +628,8 @@
           uEqVel: { value: 0.10 },
           uOpacityContrast: { value: 1.4 },
           uRTStrength: { value: 1.1 },
-          uJetAngle: { value: 12.0 },
-          uJetIntensity: { value: 1.2 },
+          uJetAngle: { value: 9.5 },
+          uJetIntensity: { value: 1.8 },
           uRemnantLum: { value: 1.1 },
           uSteps: { value: 140.0 },
           uNoiseOctaves: { value: 5.0 },
@@ -773,11 +774,20 @@
                 float tDays = max(uDays, 0.03);
                 float heatNorm = clamp(pow(tDays, -1.3) / 95.0, 0.06, 1.2);
                 float collisionCore = uAct < 2.5 ? 1.0 - smoothstep(0.55, 1.0, uAct2Progress) : exp(-evo * 6.5);
+                float viewJetAlign = abs(rd.z);
+                float promptBeam = pow(viewJetAlign, 2.6);
+                float promptVisibility = mix(0.44, 1.0, promptBeam);
+                float jetLaunch = uAct < 2.5 ? (0.40 + 0.60 * uAct2Progress) : (1.0 - 0.35 * smoothstep(0.0, 1.0, evo));
+                float jetPersist = uAct < 2.5 ? 1.0 : (0.82 + 0.18 * exp(-evo * 2.6));
+                float jetStrength = uJetIntensity * jetLaunch * jetPersist * (1.20 + 0.55 * collisionCore);
 
-                vec3 colorBlue = vec3(0.68, 0.83, 1.00);
-                vec3 colorPurple = vec3(0.91, 0.52, 1.00);
-                vec3 colorRed = vec3(1.00, 0.42, 0.16);
-                vec3 colorJet = vec3(0.74, 0.93, 1.36);
+                vec3 colorBlue = vec3(0.71, 0.84, 1.00);
+                vec3 colorPurple = vec3(0.87, 0.56, 1.00);
+                vec3 colorRed = vec3(0.96, 0.42, 0.20);
+                vec3 colorJet = vec3(0.67, 0.84, 1.35);
+                vec3 colorJetHot = vec3(1.02, 1.28, 1.86);
+                vec3 colorCocoonBlue = vec3(0.42, 0.61, 1.15);
+                vec3 colorCocoonPurple = vec3(0.80, 0.56, 1.14);
 
                 float pBlueShift = smoothstep(0.18, 0.62, evo);
                 float eRedShift = smoothstep(0.30, 1.00, evo);
@@ -785,6 +795,7 @@
                 vec3 colEq = mix(vec3(0.83, 0.44, 0.62), colorRed, eRedShift);
                 vec3 colRS = vec3(1.00, 0.48, 0.95);
                 vec3 colRT = mix(vec3(0.90, 0.58, 1.00), vec3(1.00, 0.56, 0.28), eRedShift);
+                vec3 colCocoon = mix(colorCocoonBlue, colorCocoonPurple, smoothstep(0.12, 0.90, evo));
 
                 float trans = 1.0;
                 float t = tNear + jitter;
@@ -816,7 +827,7 @@
                     stepMul = 1.58;
                   }
 
-                  if (coarseShell > 0.004 || abs(n.z) > 0.78) {
+                  if (coarseShell > 0.004 || abs(n.z) > 0.62) {
                     float rtLayer = exp(-pow((r - mix(Re, Rp, 0.52)) / (thickE * 1.1 + 0.08), 2.0));
                     float rtGrowth = pow(evo, 1.55) * uRTStrength;
                     vec3 warpP = p * 0.85 + vec3(0.0, 0.0, uTime * 0.23);
@@ -826,16 +837,34 @@
                     float branch = 0.5 + 0.5 * sin(phi * 13.0 + uTime * 0.74 + warp * 5.3);
                     rhoRT = rtLayer * fingers * (0.35 + 1.75 * branch) * rtGrowth;
 
-                    float angle = radians(max(4.0, uJetAngle));
+                    float angle = radians(max(3.0, uJetAngle));
                     float axisR = length(p.xy);
-                    float coneR = abs(p.z) * tan(angle) + 0.08;
-                    float jetCore = exp(-pow(axisR / (coneR * 0.58), 2.0));
-                    float along = smoothstep(0.25, 2.5, abs(p.z));
-                    float jetNoise = 0.54 + 0.46 * fbm(vec3(axisR * 3.7, p.z * 1.2, uTime * 0.9), localOctaves);
-                    float jetTipPos = Rp * 1.03 + (1.2 + 0.8 * collisionCore) * (1.0 - 0.35 * evo);
-                    float jetTip = exp(-pow((abs(p.z) - jetTipPos) / (0.48 + 0.36 * evo), 2.0)) * exp(-pow(axisR / (0.62 + 0.45 * evo), 2.0));
-                    rhoJet = (jetCore * along * jetNoise + 1.35 * jetTip) * uJetIntensity * (1.0 - smoothstep(Rp * 1.36, Rp * 2.12, r));
-                    rhoCocoon = exp(-pow((axisR - coneR * 1.18) / (0.18 + 0.20 * evo), 2.0)) * smoothstep(0.35, 2.6, abs(p.z)) * exp(-0.14 * abs(p.z));
+                    float az = abs(p.z);
+                    float jetLength = mix(3.2 + 3.6 * uEnergyScale, Rp * (2.55 + 0.28 * collisionCore), smoothstep(0.0, 0.46, evo));
+                    float beamT = clamp(az / max(jetLength, 1e-3), 0.0, 1.0);
+                    float collimation = mix(0.16, 0.52, smoothstep(0.0, 0.75, beamT));
+                    float coreWidth = 0.065 + az * tan(angle * collimation);
+                    float sheathWidth = coreWidth * (2.2 + 0.7 * (1.0 - beamT));
+
+                    float spine = exp(-pow(axisR / max(coreWidth, 1e-4), 2.0));
+                    float sheath = max(exp(-pow(axisR / max(sheathWidth, 1e-4), 2.0)) - spine, 0.0);
+                    float along = smoothstep(0.12, 1.0, az) * (1.0 - smoothstep(jetLength, jetLength + (1.4 + 0.8 * evo), az));
+                    float jetNoise = 0.58 + 0.42 * fbm(vec3(axisR * 3.1, p.z * 1.4 + uTime * 0.9, uTime * 0.65), localOctaves);
+                    float filament = 0.68 + 0.32 * sin(az * 8.0 - uTime * 3.2 + phi * 4.0);
+                    float jetBeam = (spine * (1.0 + 0.22 * filament) + sheath * 0.55) * along * jetNoise;
+
+                    float headR = 0.85 + 1.10 * smoothstep(0.0, 1.0, evo);
+                    float head = exp(-pow((az - jetLength) / (0.34 + 0.48 * evo), 2.0)) * exp(-pow(axisR / headR, 2.0));
+                    float hotspot = exp(-pow((az - jetLength) / (0.18 + 0.20 * evo), 2.0)) * exp(-pow(axisR / (0.36 + 0.28 * evo), 2.0));
+
+                    float cocoonRadius = az * tan(angle * 1.45) + 0.22;
+                    float cocoonShell = exp(-pow((axisR - cocoonRadius) / (0.20 + 0.30 * evo), 2.0)) * smoothstep(0.35, jetLength * 1.3, az);
+                    float cocoonFill = exp(-pow(axisR / (cocoonRadius * (1.25 + 0.30 * collisionCore) + 0.35), 2.0)) * smoothstep(0.4, jetLength * 1.25, az);
+                    float cocoonTurb = 0.65 + 0.35 * sin(warp * 8.0 + az * 2.4 - uTime * 0.5);
+
+                    float jetCut = 1.0 - smoothstep(jetLength + 2.0, jetLength + 5.0 + Rp * 0.15, az);
+                    rhoJet = (jetBeam + 1.70 * head + 2.10 * hotspot) * jetStrength * jetCut;
+                    rhoCocoon = (1.10 * cocoonShell + 0.70 * cocoonFill + 1.10 * head) * cocoonTurb * (0.90 + 0.82 * collisionCore) * clamp(jetStrength, 0.0, 3.2);
                   }
 
                   float rhoAmbient = exp(-pow((r - Rp * 1.16) / (thickP * 0.9 + 0.18), 2.0)) * 0.22;
@@ -852,8 +881,8 @@
                   emiss += rhoE * (0.45 + 1.15 * eqEmergence) * colEq;
                   emiss += rhoRS * 1.95 * colRS;
                   emiss += rhoRT * 1.20 * colRT;
-                  emiss += rhoJet * 2.10 * colorJet;
-                  emiss += rhoCocoon * (1.10 + 0.85 * collisionCore) * vec3(0.62, 0.82, 1.28);
+                  emiss += rhoJet * (2.25 + 0.75 * collisionCore) * mix(colorJet, colorJetHot, clamp(0.8 * collisionCore + 0.2 * (1.0 - evo), 0.0, 1.0));
+                  emiss += rhoCocoon * (1.15 + 1.10 * collisionCore) * colCocoon;
                   emiss += rhoAmbient * 0.55 * vec3(0.92, 0.64, 0.86);
                   emiss *= heatNorm * shockBoost;
 
@@ -865,21 +894,22 @@
                   if (uAct < 2.5) {
                     float blastR = 1.5 + 8.0 * uAct2Progress;
                     float blast = exp(-pow((r - blastR) / (0.22 + 0.35 * uAct2Progress), 2.0));
-                    blastHalo = blast * uCollisionFlash;
-                    emiss += blastHalo * vec3(4.8, 3.6, 2.8);
-                    emiss += exp(-pow(r / 1.15, 2.0)) * uCollisionFlash * vec3(6.6, 5.8, 8.0);
+                    float flashAniso = mix(0.50, 1.0, pow(abs(n.z), 1.6));
+                    blastHalo = blast * uCollisionFlash * flashAniso * promptVisibility;
+                    emiss += blastHalo * vec3(4.2, 3.4, 3.2);
+                    emiss += exp(-pow(r / 1.15, 2.0)) * uCollisionFlash * (0.45 + 0.55 * promptVisibility) * vec3(5.9, 5.3, 6.9);
                   } else {
                     float earlyShock = exp(-evo * 7.0);
                     float blastR3 = mix(2.1, Rp * 0.95, smoothstep(0.0, 0.30, evo));
-                    blastHalo = exp(-pow((r - blastR3) / (0.28 + 0.46 * evo), 2.0)) * earlyShock * (0.75 + 0.5 * uEnergyScale);
+                    blastHalo = exp(-pow((r - blastR3) / (0.28 + 0.46 * evo), 2.0)) * earlyShock * (0.75 + 0.5 * uEnergyScale) * (0.55 + 0.45 * promptVisibility);
                     emiss += blastHalo * vec3(1.4, 1.1, 1.7);
                   }
 
-                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.27 + rhoCocoon * 0.42 + rhoAmbient * 0.4 + blastHalo * 0.3);
+                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.33 + rhoCocoon * 0.52 + rhoAmbient * 0.4 + blastHalo * 0.3);
                   sigma *= opacityScale * densityScale * 0.34;
 
                   float dtEff = dt * stepMul;
-                  if (sigma < 0.0015 && coarseShell < 0.0024 && rhoJet < 0.0012) {
+                  if (sigma < 0.0015 && coarseShell < 0.0024 && (rhoJet + rhoCocoon) < 0.0015) {
                     t += dtEff;
                     continue;
                   }
@@ -942,6 +972,8 @@
           tVolume: { value: volumeHistoryRead.texture },
           uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
           uVolumeResolution: { value: new THREE.Vector2(initialVolSize.w, initialVolSize.h) },
+          uAct: { value: 1.0 },
+          uAct2Progress: { value: 0.0 },
           uBloomStrength: { value: 1.25 },
           uChromAb: { value: 0.08 },
           uSharpen: { value: 0.65 },
@@ -958,6 +990,8 @@
           uniform sampler2D tVolume;
           uniform vec2 uResolution;
           uniform vec2 uVolumeResolution;
+          uniform float uAct;
+          uniform float uAct2Progress;
           uniform float uBloomStrength;
           uniform float uChromAb;
           uniform float uSharpen;
@@ -977,8 +1011,13 @@
             vec3 n1 = texture2D(tVolume, clamp(uv - vec2(texel.x, 0.0), 0.0, 1.0)).rgb;
             vec3 n2 = texture2D(tVolume, clamp(uv + vec2(0.0, texel.y), 0.0, 1.0)).rgb;
             vec3 n3 = texture2D(tVolume, clamp(uv - vec2(0.0, texel.y), 0.0, 1.0)).rgb;
-            vec3 blur = (n0 + n1 + n2 + n3) * 0.25;
-            return max(c + (c - blur) * 0.34, vec3(0.0));
+            vec3 d0 = texture2D(tVolume, clamp(uv + vec2(texel.x, texel.y), 0.0, 1.0)).rgb;
+            vec3 d1 = texture2D(tVolume, clamp(uv + vec2(-texel.x, texel.y), 0.0, 1.0)).rgb;
+            vec3 d2 = texture2D(tVolume, clamp(uv + vec2(texel.x, -texel.y), 0.0, 1.0)).rgb;
+            vec3 d3 = texture2D(tVolume, clamp(uv + vec2(-texel.x, -texel.y), 0.0, 1.0)).rgb;
+            vec3 tent = c * 0.36 + (n0 + n1 + n2 + n3) * 0.12 + (d0 + d1 + d2 + d3) * 0.04;
+            vec3 detail = c - (n0 + n1 + n2 + n3) * 0.25;
+            return max(tent + detail * 0.28, vec3(0.0));
           }
 
           vec3 starAura(vec2 uv, vec2 center, float vis) {
@@ -1019,8 +1058,9 @@
 
             float luminance = dot(outColor, vec3(0.2126, 0.7152, 0.0722));
             float bloomMask = smoothstep(0.50, 1.7, luminance);
-            vec3 bloomColor = (blurBase + volumeColor * 0.35) * bloomMask * (0.9 * uBloomStrength);
-            outColor += bloomColor + volumeColor * (0.20 * uBloomStrength);
+            float act2BloomSupp = uAct < 2.5 ? (0.72 + 0.28 * uAct2Progress) : 1.0;
+            vec3 bloomColor = (blurBase + volumeColor * (0.23 * act2BloomSupp + 0.10)) * bloomMask * (0.9 * uBloomStrength);
+            outColor += bloomColor + volumeColor * ((0.13 + 0.07 * act2BloomSupp) * uBloomStrength);
 
             gl_FragColor = vec4(max(outColor, vec3(0.0)), 1.0);
           }
@@ -1215,49 +1255,134 @@
       remnant.visible = false;
       scene.add(remnant);
 
+      const pointSpriteVertexShader = /* glsl */ `
+        precision highp float;
+        attribute float aSize;
+        attribute float aPhase;
+        varying vec3 vColor;
+        varying float vPhase;
+        uniform float uBaseSize;
+        uniform float uScale;
+        uniform float uTime;
+
+        void main() {
+          vColor = color;
+          vPhase = aPhase;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float dist = max(1.0, -mv.z);
+          float twinkle = 0.86 + 0.14 * sin(uTime * 0.9 + aPhase);
+          gl_PointSize = uBaseSize * aSize * uScale * twinkle / dist;
+          gl_Position = projectionMatrix * mv;
+        }
+      `;
+
+      const pointSpriteFragmentShader = /* glsl */ `
+        precision highp float;
+        varying vec3 vColor;
+        varying float vPhase;
+        uniform float uOpacity;
+        uniform float uSoftness;
+        uniform float uCoreBoost;
+        uniform float uTime;
+
+        void main() {
+          vec2 uv = gl_PointCoord * 2.0 - 1.0;
+          float r2 = dot(uv, uv);
+          if (r2 > 1.0) {
+            discard;
+          }
+
+          float halo = exp(-r2 * (2.4 + uSoftness * 0.9));
+          float core = exp(-r2 * (8.5 + uSoftness * 1.8)) * uCoreBoost;
+          float scint = 0.90 + 0.10 * sin(uTime * 2.2 + vPhase * 1.7);
+          float alpha = (halo + core) * uOpacity * scint;
+          gl_FragColor = vec4(vColor * (halo * 0.7 + core * 1.35), alpha);
+        }
+      `;
+
       const burstCount = 2600;
       const burstPositions = new Float32Array(burstCount * 3);
       const burstVel = new Float32Array(burstCount * 3);
       const burstColor = new Float32Array(burstCount * 3);
+      const burstSize = new Float32Array(burstCount);
+      const burstPhase = new Float32Array(burstCount);
       const burstGeom = new THREE.BufferGeometry();
       burstGeom.setAttribute("position", new THREE.BufferAttribute(burstPositions, 3));
       burstGeom.setAttribute("color", new THREE.BufferAttribute(burstColor, 3));
-      const burstMat = new THREE.PointsMaterial({
-        size: 0.10,
-        vertexColors: true,
+      burstGeom.setAttribute("aSize", new THREE.BufferAttribute(burstSize, 1));
+      burstGeom.setAttribute("aPhase", new THREE.BufferAttribute(burstPhase, 1));
+      const burstMat = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0.0 },
+          uOpacity: { value: 0.0 },
+          uBaseSize: { value: 42.0 },
+          uScale: { value: Math.min(window.devicePixelRatio, 2.0) },
+          uSoftness: { value: 1.15 },
+          uCoreBoost: { value: 1.25 },
+        },
+        vertexShader: pointSpriteVertexShader,
+        fragmentShader: pointSpriteFragmentShader,
         transparent: true,
-        opacity: 0.0,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        vertexColors: true,
       });
       const burstPoints = new THREE.Points(burstGeom, burstMat);
       burstPoints.visible = false;
+      burstPoints.frustumCulled = false;
       scene.add(burstPoints);
 
       function initBurstDirections() {
         for (let i = 0; i < burstCount; i++) {
           const i3 = i * 3;
-          const u = Math.random();
-          const v = Math.random();
-          const theta = 2.0 * Math.PI * u;
-          const phi = Math.acos(2.0 * v - 1.0);
-          const dir = new THREE.Vector3(
-            Math.sin(phi) * Math.cos(theta),
-            Math.sin(phi) * Math.sin(theta),
-            Math.cos(phi)
-          );
-          const speed = 2.5 + Math.random() * 8.0 + Math.pow(Math.random(), 3.0) * 18.0;
+          const theta = 2.0 * Math.PI * Math.random();
+          const mixComp = Math.random();
+          let dir = new THREE.Vector3();
+          let speed = 0.0;
+          let r = 1.0;
+          let g = 1.0;
+          let b = 1.0;
+
+          if (mixComp < 0.52) {
+            // Equatorial tidal ejecta: slower and warmer.
+            const z = (Math.random() * 2.0 - 1.0) * 0.24;
+            const rr = Math.sqrt(Math.max(0.0, 1.0 - z * z));
+            dir.set(rr * Math.cos(theta), rr * Math.sin(theta), z).normalize();
+            speed = 2.3 + Math.random() * 6.6 + Math.pow(Math.random(), 2.2) * 6.0;
+            r = 0.98;
+            g = 0.74 + Math.random() * 0.14;
+            b = 0.95;
+          } else if (mixComp < 0.84) {
+            // Polar component: faster, lanthanide-poor, bluer.
+            const polarSign = Math.random() < 0.5 ? -1.0 : 1.0;
+            const z = polarSign * (0.70 + Math.random() * 0.30);
+            const rr = Math.sqrt(Math.max(0.0, 1.0 - z * z));
+            dir.set(rr * Math.cos(theta), rr * Math.sin(theta), z).normalize();
+            speed = 5.2 + Math.random() * 10.5 + Math.pow(Math.random(), 2.7) * 10.0;
+            r = 0.72;
+            g = 0.90 + Math.random() * 0.10;
+            b = 1.00;
+          } else {
+            // Quasi-isotropic hot flash debris.
+            const u = Math.random();
+            const v = Math.random();
+            const phi = Math.acos(2.0 * v - 1.0);
+            dir.set(Math.sin(phi) * Math.cos(theta), Math.sin(phi) * Math.sin(theta), Math.cos(phi));
+            speed = 4.0 + Math.random() * 12.0 + Math.pow(Math.random(), 3.0) * 14.0;
+            r = 0.90 + Math.random() * 0.10;
+            g = 0.78 + Math.random() * 0.16;
+            b = 1.00;
+          }
+
           burstVel[i3 + 0] = dir.x * speed;
           burstVel[i3 + 1] = dir.y * speed;
           burstVel[i3 + 2] = dir.z * speed;
 
-          const t = Math.random();
-          const r = 0.75 + 0.25 * t;
-          const g = 0.56 + 0.34 * (1.0 - t);
-          const b = 0.96;
           burstColor[i3 + 0] = r;
           burstColor[i3 + 1] = g;
           burstColor[i3 + 2] = b;
+          burstSize[i] = 0.55 + Math.pow(Math.random(), 2.0) * 1.55;
+          burstPhase[i] = Math.random() * Math.PI * 2.0;
 
           burstPositions[i3 + 0] = 0;
           burstPositions[i3 + 1] = 0;
@@ -1269,6 +1394,9 @@
 
       const starfieldCount = 2200;
       const starfieldPositions = new Float32Array(starfieldCount * 3);
+      const starfieldColor = new Float32Array(starfieldCount * 3);
+      const starfieldSize = new Float32Array(starfieldCount);
+      const starfieldPhase = new Float32Array(starfieldCount);
       for (let i = 0; i < starfieldCount; i++) {
         const i3 = i * 3;
         const r = 80 + Math.random() * 240;
@@ -1277,11 +1405,36 @@
         starfieldPositions[i3 + 0] = r * Math.sin(phi) * Math.cos(theta);
         starfieldPositions[i3 + 1] = r * Math.sin(phi) * Math.sin(theta);
         starfieldPositions[i3 + 2] = r * Math.cos(phi);
+
+        const tint = Math.random();
+        starfieldColor[i3 + 0] = 0.70 + 0.28 * tint;
+        starfieldColor[i3 + 1] = 0.76 + 0.22 * (1.0 - tint * 0.65);
+        starfieldColor[i3 + 2] = 0.95 + 0.05 * Math.random();
+        starfieldSize[i] = 0.55 + Math.pow(Math.random(), 1.8) * 1.95;
+        starfieldPhase[i] = Math.random() * Math.PI * 2.0;
       }
-      const starfield = new THREE.Points(
-        new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(starfieldPositions, 3)),
-        new THREE.PointsMaterial({ color: 0x9fb8ff, size: 0.8, sizeAttenuation: true, transparent: true, opacity: 0.8 })
-      );
+      const starfieldGeom = new THREE.BufferGeometry();
+      starfieldGeom.setAttribute("position", new THREE.BufferAttribute(starfieldPositions, 3));
+      starfieldGeom.setAttribute("color", new THREE.BufferAttribute(starfieldColor, 3));
+      starfieldGeom.setAttribute("aSize", new THREE.BufferAttribute(starfieldSize, 1));
+      starfieldGeom.setAttribute("aPhase", new THREE.BufferAttribute(starfieldPhase, 1));
+      const starfieldMat = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0.0 },
+          uOpacity: { value: 0.82 },
+          uBaseSize: { value: 34.0 },
+          uScale: { value: Math.min(window.devicePixelRatio, 2.0) },
+          uSoftness: { value: 1.65 },
+          uCoreBoost: { value: 1.05 },
+        },
+        vertexShader: pointSpriteVertexShader,
+        fragmentShader: pointSpriteFragmentShader,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        vertexColors: true,
+      });
+      const starfield = new THREE.Points(starfieldGeom, starfieldMat);
       scene.add(starfield);
 
       const ambient = new THREE.AmbientLight(0xffffff, 0.25);
@@ -1301,8 +1454,8 @@
         eqVel: 0.10,
         opacityContrast: 1.35,
         rtStrength: 1.1,
-        jetAngle: 12.0,
-        jetIntensity: 1.2,
+        jetAngle: 9.5,
+        jetIntensity: 1.8,
         remnantLum: 1.1,
         bloomStrength: 1.25,
         chromaticAberration: 0.08,
@@ -1490,12 +1643,16 @@
 
       const presetMap = {
         wide: {
-          pos: new THREE.Vector3(0, 2.8, 14.8),
+          pos: new THREE.Vector3(8.6, 4.2, 12.6),
           target: new THREE.Vector3(0, 0, 0),
         },
         orbital: {
           pos: new THREE.Vector3(12.5, 3.6, 10.2),
           target: new THREE.Vector3(0, 0.3, 0),
+        },
+        jet: {
+          pos: new THREE.Vector3(10.8, 6.8, 8.4),
+          target: new THREE.Vector3(0, 0, 0),
         },
         polar: {
           pos: new THREE.Vector3(0.2, 18, 2.4),
@@ -1525,8 +1682,9 @@
 
       function updateBurst(collisionTime, totalMassScale) {
         const fade = Math.exp(-collisionTime * 0.6);
-        burstMat.opacity = clamp(1.5 * fade, 0, 1.0);
-        burstPoints.visible = burstMat.opacity > 0.01;
+        const opacity = clamp(1.45 * fade, 0, 1.0);
+        burstMat.uniforms.uOpacity.value = opacity;
+        burstPoints.visible = opacity > 0.01;
 
         for (let i = 0; i < burstCount; i++) {
           const i3 = i * 3;
@@ -1588,7 +1746,7 @@
         remnant.visible = false;
         state.remnantFade = 0.0;
 
-        burstMat.opacity = 0.0;
+        burstMat.uniforms.uOpacity.value = 0.0;
         burstPoints.visible = false;
       }
 
@@ -1706,8 +1864,8 @@
           updateExpansion(elapsed, state.actTime, massScale);
         }
 
-        const flash = state.act === 2 ? Math.exp(-state.act2Progress * 7.5) * (2.2 * massScale) : 0.0;
-        renderer.toneMappingExposure = 1.0 + flash * 0.45;
+        const flash = state.act === 2 ? Math.exp(-state.act2Progress * 8.8) * (2.0 * massScale) : 0.0;
+        renderer.toneMappingExposure = 1.0 + flash * 0.32;
 
         const volUniforms = volumeMaterial.uniforms;
         const compUniforms = compositeMaterial.uniforms;
@@ -1732,7 +1890,10 @@
         volUniforms.uJetIntensity.value = params.jetIntensity;
         volUniforms.uRemnantLum.value = state.act === 2 ? params.remnantLum * state.remnantFade : 0.0;
 
-        compUniforms.uBloomStrength.value = params.bloomStrength;
+        const act2BloomScale = state.act === 2 ? (0.80 + 0.20 * state.act2Progress) : 1.0;
+        compUniforms.uBloomStrength.value = params.bloomStrength * act2BloomScale;
+        compUniforms.uAct.value = state.act;
+        compUniforms.uAct2Progress.value = state.act2Progress;
         compUniforms.uChromAb.value = params.chromaticAberration;
         compUniforms.uSharpen.value = params.sharpen;
 
@@ -1828,6 +1989,9 @@
         volumeMaterial.uniforms.uResolution.value.set(volSize.w, volSize.h);
         compositeMaterial.uniforms.uResolution.value.set(w, h);
         compositeMaterial.uniforms.uVolumeResolution.value.set(volSize.w, volSize.h);
+        const pointScale = Math.min(window.devicePixelRatio, 2.0);
+        burstMat.uniforms.uScale.value = pointScale;
+        starfieldMat.uniforms.uScale.value = pointScale;
         state.forceHistoryReset = true;
       }
 
@@ -1862,6 +2026,8 @@
         prevCamQuat.copy(camera.quaternion);
 
         const elapsed = clock.getElapsedTime();
+        burstMat.uniforms.uTime.value = elapsed;
+        starfieldMat.uniforms.uTime.value = elapsed;
         updateAct(elapsed);
 
         renderer.setRenderTarget(baseTarget);
