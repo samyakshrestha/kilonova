@@ -594,6 +594,8 @@
           uRemnantLum: { value: 1.1 },
           uSteps: { value: 128.0 },
           uNoiseOctaves: { value: 5.0 },
+          uStepScale: { value: 1.0 },
+          uNoiseScale: { value: 1.0 },
           uBloomStrength: { value: 1.25 },
           uChromAb: { value: 0.08 },
           uSharpen: { value: 0.65 },
@@ -635,6 +637,8 @@
           uniform float uRemnantLum;
           uniform float uSteps;
           uniform float uNoiseOctaves;
+          uniform float uStepScale;
+          uniform float uNoiseScale;
           uniform float uBloomStrength;
           uniform float uChromAb;
           uniform float uSharpen;
@@ -757,10 +761,17 @@
               float boundRadius = (15.0 + 6.0 * uEnergyScale);
               vec2 hit = raySphere(ro, rd, boundRadius);
               if (hit.x <= hit.y) {
+                float centerFocus = 1.0 - smoothstep(0.12, 0.86, distToCenter);
+                float peripheryFactor = mix(0.48, 1.0, centerFocus);
+                float flashHeavy = smoothstep(0.4, 1.8, uCollisionFlash);
+                float flashFactor = mix(1.0, 0.56, flashHeavy);
+                float localSteps = floor(max(22.0, uSteps * uStepScale * peripheryFactor * flashFactor));
+                float localOctaves = max(2.0, floor(uNoiseOctaves * uNoiseScale * mix(0.6, 1.0, centerFocus)));
+
                 float tNear = max(hit.x, 0.0);
                 float tFar = hit.y;
                 float totalDist = max(1e-4, tFar - tNear);
-                float dt = totalDist / max(1.0, uSteps);
+                float dt = totalDist / max(1.0, localSteps);
                 float jitter = (hash11(dot(vUv, vec2(113.17, 91.73)) + uTime) - 0.5) * dt;
 
                 float evo = clamp(uAct3Progress, 0.0, 1.0);
@@ -794,7 +805,7 @@
                 float trans = 1.0;
 
                 for (int i = 0; i < MAX_STEPS; i++) {
-                  if (float(i) >= uSteps) {
+                  if (float(i) >= localSteps) {
                     break;
                   }
 
@@ -812,22 +823,27 @@
                   float rsThickness = mix(0.18, 0.45, evo);
                   float rhoRS = exp(-pow((r - Rrs) / rsThickness, 2.0)) * mix(0.75 * equa, 0.65 * pole, 0.4);
 
-                  float rtLayer = exp(-pow((r - mix(Re, Rp, 0.52)) / (thickE * 1.1 + 0.08), 2.0));
-                  float rtGrowth = pow(evo, 1.55) * uRTStrength;
-                  vec3 warpP = p * 0.85 + vec3(0.0, 0.0, uTime * 0.23);
-                  float warp = fbm(warpP * 0.95, uNoiseOctaves);
-                  float fingers = smoothstep(0.50, 0.89, fbm(warpP * 2.15 + warp * 2.3 * n, uNoiseOctaves));
-                  float phi = atan(n.y, n.x);
-                  float branch = 0.5 + 0.5 * sin(phi * 13.0 + uTime * 0.74 + warp * 5.3);
-                  float rhoRT = rtLayer * fingers * (0.35 + 1.75 * branch) * rtGrowth;
+                  float rhoRT = 0.0;
+                  float rhoJet = 0.0;
+                  float coarseShell = rhoP + rhoE + rhoRS;
+                  if (coarseShell > 0.004 || abs(n.z) > 0.78) {
+                    float rtLayer = exp(-pow((r - mix(Re, Rp, 0.52)) / (thickE * 1.1 + 0.08), 2.0));
+                    float rtGrowth = pow(evo, 1.55) * uRTStrength;
+                    vec3 warpP = p * 0.85 + vec3(0.0, 0.0, uTime * 0.23);
+                    float warp = fbm(warpP * 0.95, localOctaves);
+                    float fingers = smoothstep(0.50, 0.89, fbm(warpP * 2.15 + warp * 2.3 * n, localOctaves));
+                    float phi = atan(n.y, n.x);
+                    float branch = 0.5 + 0.5 * sin(phi * 13.0 + uTime * 0.74 + warp * 5.3);
+                    rhoRT = rtLayer * fingers * (0.35 + 1.75 * branch) * rtGrowth;
 
-                  float angle = radians(max(4.0, uJetAngle));
-                  float axisR = length(p.xy);
-                  float coneR = abs(p.z) * tan(angle) + 0.08;
-                  float jetCore = exp(-pow(axisR / (coneR * 0.58), 2.0));
-                  float along = smoothstep(0.25, 2.5, abs(p.z));
-                  float jetNoise = 0.54 + 0.46 * fbm(vec3(axisR * 3.7, p.z * 1.2, uTime * 0.9), uNoiseOctaves);
-                  float rhoJet = jetCore * along * jetNoise * uJetIntensity * (1.0 - smoothstep(Rp * 1.36, Rp * 1.92, r));
+                    float angle = radians(max(4.0, uJetAngle));
+                    float axisR = length(p.xy);
+                    float coneR = abs(p.z) * tan(angle) + 0.08;
+                    float jetCore = exp(-pow(axisR / (coneR * 0.58), 2.0));
+                    float along = smoothstep(0.25, 2.5, abs(p.z));
+                    float jetNoise = 0.54 + 0.46 * fbm(vec3(axisR * 3.7, p.z * 1.2, uTime * 0.9), localOctaves);
+                    rhoJet = jetCore * along * jetNoise * uJetIntensity * (1.0 - smoothstep(Rp * 1.36, Rp * 1.92, r));
+                  }
 
                   float rhoAmbient = exp(-pow((r - Rp * 1.16) / (thickP * 0.9 + 0.18), 2.0)) * 0.22;
 
@@ -1598,6 +1614,18 @@
         postMaterial.uniforms.uBloomStrength.value = params.bloomStrength;
         postMaterial.uniforms.uChromAb.value = params.chromaticAberration;
         postMaterial.uniforms.uSharpen.value = params.sharpen;
+        let stepScale = 1.0;
+        let noiseScale = 1.0;
+        if (state.act === 2) {
+          stepScale = 0.42 + 0.33 * state.act2Progress;
+          noiseScale = 0.60 + 0.20 * state.act2Progress;
+        } else if (state.act === 3) {
+          const ramp = smoothstep(0.0, 0.32, state.act3Progress);
+          stepScale = 0.75 + 0.25 * ramp;
+          noiseScale = 0.80 + 0.20 * ramp;
+        }
+        postMaterial.uniforms.uStepScale.value = stepScale;
+        postMaterial.uniforms.uNoiseScale.value = noiseScale;
 
         let starVis1 = 0.0;
         let starVis2 = 0.0;
@@ -1637,7 +1665,8 @@
         }
         hudFPS.textContent = `FPS (smoothed): ${state.fpsSmooth.toFixed(1)}`;
         hudQuality.textContent = `Render Quality Tier: ${qualityProfile.name}`;
-        hudSteps.textContent = `Ray March Steps: ${Math.round(postMaterial.uniforms.uSteps.value)}`;
+        const effectiveSteps = Math.round(postMaterial.uniforms.uSteps.value * postMaterial.uniforms.uStepScale.value);
+        hudSteps.textContent = `Ray March Steps: ${effectiveSteps}`;
       }
 
       function onResize() {
