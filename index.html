@@ -278,9 +278,9 @@
       <label>
         <div class="label-top">
           <span>Time Scale</span>
-          <span class="value" id="timeScaleValue">2.40x</span>
+          <span class="value" id="timeScaleValue">1.00x</span>
         </div>
-        <input id="timeScale" type="range" min="0.1" max="4" step="0.01" value="2.4" />
+        <input id="timeScale" type="range" min="0.1" max="4" step="0.01" value="1" />
       </label>
 
       <details open>
@@ -307,7 +307,7 @@
             <span>Inspiral Separation Scale</span>
             <span class="value" id="separationScaleValue"></span>
           </div>
-          <input id="separationScale" type="range" min="0.75" max="2.40" step="0.01" />
+          <input id="separationScale" type="range" min="0.75" max="1.40" step="0.01" />
         </label>
 
         <label>
@@ -823,59 +823,40 @@
             return invL5 / max(exp(min(x, 60.0)) - 1.0, 1e-6);
           }
 
-          vec4 planckBands4(float tempK) {
-            return vec4(
-              planckBand(tempK, 430.0),
-              planckBand(tempK, 550.0),
-              planckBand(tempK, 680.0),
-              planckBand(tempK, 920.0)
-            );
-          }
-
-          vec4 opacityBands4(float tau0, float lanth, float recombFront, float tDay) {
-            float late = smoothstep(0.9, 8.0, tDay);
-            vec4 kappa = vec4(
-              1.22 + 1.35 * lanth + 0.42 * recombFront,
-              0.98 + 0.92 * lanth + 0.28 * recombFront,
-              0.76 + 0.56 * lanth + 0.16 * recombFront,
-              0.52 + 0.42 * lanth + 0.34 * recombFront + 0.20 * late
-            );
-            return exp(-tau0 * kappa);
-          }
-
-          vec3 bands4ToRGB(vec4 flux) {
-            vec3 rgb;
-            rgb.r = 0.10 * flux.x + 0.28 * flux.y + 1.04 * flux.z + 0.74 * flux.w;
-            rgb.g = 0.18 * flux.x + 0.98 * flux.y + 0.34 * flux.z + 0.16 * flux.w;
-            rgb.b = 1.16 * flux.x + 0.46 * flux.y + 0.06 * flux.z + 0.01 * flux.w;
-            return max(rgb, vec3(0.0));
-          }
-
-          vec3 pseudoSpectralColor(float tempK, float tauRef, float yE, float recombFrac, float tDay) {
+          vec3 pseudoSpectralColor(float tempK, float tauRef, float yE, float recombFrac) {
             float lanth = clamp((0.30 - yE) / 0.16, 0.0, 1.0);
-            float recombFront = smoothstep(0.14, 0.90, recombFrac);
-            float diffPhase = smoothstep(0.06, 2.6, tDay);
-            float tau0 = max(tauRef, 0.0) * (0.66 + 1.34 * lanth) * (1.0 + 0.62 * recombFront) * (0.94 + 0.10 * diffPhase);
+            float tau0 = max(tauRef, 0.0) * (0.70 + 1.25 * lanth) * (1.0 + 0.46 * recombFrac);
 
-            vec4 bb = planckBands4(tempK);
-            vec4 trans = opacityBands4(tau0, lanth, recombFront, tDay);
-            vec4 flux = bb * trans;
+            float bU = planckBand(tempK, 360.0);
+            float bB = planckBand(tempK, 440.0);
+            float bV = planckBand(tempK, 540.0);
+            float bR = planckBand(tempK, 650.0);
+            float bI = planckBand(tempK, 780.0);
 
-            float absorbedBlue = bb.x * (1.0 - trans.x) + 0.72 * bb.y * (1.0 - trans.y);
-            float thermalShift = smoothstep(0.18, 1.0, recombFrac) * smoothstep(0.30, 7.5, tDay);
-            flux.z += absorbedBlue * (0.22 + 0.44 * recombFrac + 0.16 * lanth);
-            flux.w += absorbedBlue * (0.20 + 0.62 * recombFrac + 0.32 * thermalShift + 0.20 * lanth);
+            float tU = exp(-tau0 * (1.95 + 0.55 * lanth));
+            float tB = exp(-tau0 * (1.45 + 0.42 * lanth));
+            float tV = exp(-tau0 * (1.05 + 0.22 * lanth));
+            float tR = exp(-tau0 * (0.78 + 0.10 * lanth));
+            float tI = exp(-tau0 * (0.58 + 0.08 * lanth));
 
-            float nebular = smoothstep(1.2, 9.0, tDay) * (0.35 + 0.65 * lanth);
-            flux.z *= 1.0 + 0.10 * nebular;
-            flux.w *= 1.0 + 0.26 * nebular;
+            float fU = bU * tU;
+            float fB = bB * tB;
+            float fV = bV * tV;
+            float fR = bR * tR;
+            float fI = bI * tI;
 
-            vec3 rgb = bands4ToRGB(flux);
+            float absorbedBlue = bU * (1.0 - tU) + 0.85 * bB * (1.0 - tB) + 0.45 * bV * (1.0 - tV);
+            fR += absorbedBlue * (0.22 + 0.42 * recombFrac);
+            fI += absorbedBlue * (0.18 + 0.56 * recombFrac);
+
+            vec3 rgb;
+            rgb.r = 0.03 * fU + 0.14 * fB + 0.38 * fV + 1.05 * fR + 0.68 * fI;
+            rgb.g = 0.10 * fU + 0.84 * fB + 1.00 * fV + 0.34 * fR + 0.08 * fI;
+            rgb.b = 1.08 * fU + 1.16 * fB + 0.34 * fV + 0.04 * fR + 0.01 * fI;
 
             float lum = max(dot(rgb, vec3(0.2126, 0.7152, 0.0722)), 1e-6);
             rgb /= lum;
-            float sat = mix(0.90, 1.12, smoothstep(2200.0, 11000.0, tempK));
-            sat *= mix(1.0, 0.93, smoothstep(0.5, 1.0, recombFrac) * smoothstep(1.8, 12.0, tDay));
+            float sat = mix(0.92, 1.08, smoothstep(2200.0, 9000.0, tempK));
             rgb = mix(vec3(1.0), rgb, sat);
             return max(rgb, vec3(0.0));
           }
@@ -1087,9 +1068,9 @@
                 float recombEqNear = 1.0 - smoothstep(2500.0, 4300.0, TeqNear);
                 float recombCocoonNear = 1.0 - smoothstep(2500.0, 4300.0, TcocoonNear);
                 float recombPhotoNear = 1.0 - smoothstep(2600.0, 4600.0, TphotoNear);
-                vec3 bbPolarNear = pseudoSpectralColor(TpolarNear, tauPolarNear, yEPolarNear, recombPolarNear, tDays);
-                vec3 bbEqNear = pseudoSpectralColor(TeqNear, tauEqNear, yEEqNear, recombEqNear, tDays);
-                vec3 bbCocoonNear = pseudoSpectralColor(TcocoonNear, tauCocoonNear, yECocoonNear, recombCocoonNear, tDays);
+                vec3 bbPolarNear = pseudoSpectralColor(TpolarNear, tauPolarNear, yEPolarNear, recombPolarNear);
+                vec3 bbEqNear = pseudoSpectralColor(TeqNear, tauEqNear, yEEqNear, recombEqNear);
+                vec3 bbCocoonNear = pseudoSpectralColor(TcocoonNear, tauCocoonNear, yECocoonNear, recombCocoonNear);
                 vec3 tintPolarNear = lineEmissionTint(tDays, yEPolarNear, tauPolarNear, TpolarNear);
                 vec3 tintEqNear = lineEmissionTint(tDays, yEEqNear, tauEqNear, TeqNear);
                 vec3 tintCocoonNear = lineEmissionTint(tDays, yECocoonNear, tauCocoonNear, TcocoonNear);
@@ -1100,10 +1081,10 @@
                 vec3 colRSNear = mix(kelvinToRGB(9000.0 + 2600.0 * phaseBlueNear), vec3(1.0, 0.66, 0.82), 0.24 + 0.24 * phasePurpleNear);
                 vec3 colRTNear = mix(vec3(0.90, 0.64, 1.04), vec3(1.00, 0.56, 0.31), smoothstep(0.45, 1.0, evo));
                 vec3 colCocoonNear = mix(bbCocoonNear, vec3(0.82, 0.62, 1.08), 0.24 + 0.34 * phasePurpleNear);
-                vec3 colInnerCloudNear = mix(pseudoSpectralColor(TcloudEarlyNear, 0.55 * tauCocoonNear + 0.45 * tauPolarNear, mix(yECocoonNear, yEPolarNear, 0.40), mix(recombCocoonNear, recombPolarNear, 0.45), tDays), vec3(0.76, 0.96, 1.34), 0.32 * phaseBlueNear + 0.28 * phasePurpleNear);
-                vec3 colNestedShellNear = mix(pseudoSpectralColor(TcloudLateNear, 0.65 * tauEqNear + 0.35 * tauCocoonNear, mix(yEEqNear, yECocoonNear, 0.58), mix(recombEqNear, recombCocoonNear, 0.60), tDays), vec3(0.97, 0.58, 0.38), 0.52 * phaseRedNear);
+                vec3 colInnerCloudNear = mix(pseudoSpectralColor(TcloudEarlyNear, 0.55 * tauCocoonNear + 0.45 * tauPolarNear, mix(yECocoonNear, yEPolarNear, 0.40), mix(recombCocoonNear, recombPolarNear, 0.45)), vec3(0.76, 0.96, 1.34), 0.32 * phaseBlueNear + 0.28 * phasePurpleNear);
+                vec3 colNestedShellNear = mix(pseudoSpectralColor(TcloudLateNear, 0.65 * tauEqNear + 0.35 * tauCocoonNear, mix(yEEqNear, yECocoonNear, 0.58), mix(recombEqNear, recombCocoonNear, 0.60)), vec3(0.97, 0.58, 0.38), 0.52 * phaseRedNear);
                 vec3 colNebulaCloudNear = mix(mix(colInnerCloudNear, colCocoonNear, 0.42), mix(colNestedShellNear, vec3(0.74, 0.92, 1.26), 0.50), 0.48 + 0.20 * phasePurpleNear);
-                vec3 colPhotoNear = mix(pseudoSpectralColor(TphotoNear, mix(tauPolarNear, tauEqNear, 0.58), mix(yEPolarNear, yEEqNear, 0.58), recombPhotoNear, tDays), colPolarNear, 0.24);
+                vec3 colPhotoNear = mix(pseudoSpectralColor(TphotoNear, mix(tauPolarNear, tauEqNear, 0.58), mix(yEPolarNear, yEEqNear, 0.58), recombPhotoNear), colPolarNear, 0.24);
                 vec3 colAfterglowNear = mix(kelvinToRGB(TagNear), vec3(0.62, 0.86, 1.30), 0.54);
                 colPolarNear = applyTintLumConserve(colPolarNear, tintPolarNear, 0.46);
                 colEqNear = applyTintLumConserve(colEqNear, tintEqNear, 0.58);
@@ -1118,9 +1099,9 @@
                 float recombEqFar = 1.0 - smoothstep(2500.0, 4300.0, TeqFar);
                 float recombCocoonFar = 1.0 - smoothstep(2500.0, 4300.0, TcocoonFar);
                 float recombPhotoFar = 1.0 - smoothstep(2600.0, 4600.0, TphotoFar);
-                vec3 bbPolarFar = pseudoSpectralColor(TpolarFar, tauPolarFar, yEPolarFar, recombPolarFar, tDaysFar);
-                vec3 bbEqFar = pseudoSpectralColor(TeqFar, tauEqFar, yEEqFar, recombEqFar, tDaysFar);
-                vec3 bbCocoonFar = pseudoSpectralColor(TcocoonFar, tauCocoonFar, yECocoonFar, recombCocoonFar, tDaysFar);
+                vec3 bbPolarFar = pseudoSpectralColor(TpolarFar, tauPolarFar, yEPolarFar, recombPolarFar);
+                vec3 bbEqFar = pseudoSpectralColor(TeqFar, tauEqFar, yEEqFar, recombEqFar);
+                vec3 bbCocoonFar = pseudoSpectralColor(TcocoonFar, tauCocoonFar, yECocoonFar, recombCocoonFar);
                 vec3 tintPolarFar = lineEmissionTint(tDaysFar, yEPolarFar, tauPolarFar, TpolarFar);
                 vec3 tintEqFar = lineEmissionTint(tDaysFar, yEEqFar, tauEqFar, TeqFar);
                 vec3 tintCocoonFar = lineEmissionTint(tDaysFar, yECocoonFar, tauCocoonFar, TcocoonFar);
@@ -1131,10 +1112,10 @@
                 vec3 colRSFar = mix(kelvinToRGB(9000.0 + 2600.0 * phaseBlueFar), vec3(1.0, 0.66, 0.82), 0.24 + 0.24 * phasePurpleFar);
                 vec3 colRTFar = colRTNear;
                 vec3 colCocoonFar = mix(bbCocoonFar, vec3(0.82, 0.62, 1.08), 0.24 + 0.34 * phasePurpleFar);
-                vec3 colInnerCloudFar = mix(pseudoSpectralColor(TcloudEarlyFar, 0.55 * tauCocoonFar + 0.45 * tauPolarFar, mix(yECocoonFar, yEPolarFar, 0.40), mix(recombCocoonFar, recombPolarFar, 0.45), tDaysFar), vec3(0.76, 0.96, 1.34), 0.32 * phaseBlueFar + 0.28 * phasePurpleFar);
-                vec3 colNestedShellFar = mix(pseudoSpectralColor(TcloudLateFar, 0.65 * tauEqFar + 0.35 * tauCocoonFar, mix(yEEqFar, yECocoonFar, 0.58), mix(recombEqFar, recombCocoonFar, 0.60), tDaysFar), vec3(0.97, 0.58, 0.38), 0.52 * phaseRedFar);
+                vec3 colInnerCloudFar = mix(pseudoSpectralColor(TcloudEarlyFar, 0.55 * tauCocoonFar + 0.45 * tauPolarFar, mix(yECocoonFar, yEPolarFar, 0.40), mix(recombCocoonFar, recombPolarFar, 0.45)), vec3(0.76, 0.96, 1.34), 0.32 * phaseBlueFar + 0.28 * phasePurpleFar);
+                vec3 colNestedShellFar = mix(pseudoSpectralColor(TcloudLateFar, 0.65 * tauEqFar + 0.35 * tauCocoonFar, mix(yEEqFar, yECocoonFar, 0.58), mix(recombEqFar, recombCocoonFar, 0.60)), vec3(0.97, 0.58, 0.38), 0.52 * phaseRedFar);
                 vec3 colNebulaCloudFar = mix(mix(colInnerCloudFar, colCocoonFar, 0.42), mix(colNestedShellFar, vec3(0.74, 0.92, 1.26), 0.50), 0.48 + 0.20 * phasePurpleFar);
-                vec3 colPhotoFar = mix(pseudoSpectralColor(TphotoFar, mix(tauPolarFar, tauEqFar, 0.58), mix(yEPolarFar, yEEqFar, 0.58), recombPhotoFar, tDaysFar), colPolarFar, 0.24);
+                vec3 colPhotoFar = mix(pseudoSpectralColor(TphotoFar, mix(tauPolarFar, tauEqFar, 0.58), mix(yEPolarFar, yEEqFar, 0.58), recombPhotoFar), colPolarFar, 0.24);
                 vec3 colAfterglowFar = mix(kelvinToRGB(TagFar), vec3(0.62, 0.86, 1.30), 0.54);
                 colPolarFar = applyTintLumConserve(colPolarFar, tintPolarFar, 0.46);
                 colEqFar = applyTintLumConserve(colEqFar, tintEqFar, 0.58);
@@ -1388,23 +1369,12 @@
                   vec3 colJetSynch = mix(vec3(0.95, 1.12, 1.74), vec3(0.58, 0.80, 1.24), daySoften);
                   vec3 colJetMix = mix(mix(colorJet, colorJetHot, clamp(0.8 * collisionCore + 0.2 * (1.0 - evoSh), 0.0, 1.0)), colJetSynch, 0.58 * jetCool);
                   vec3 colCocoonMix = mix(colCocoonLocal, vec3(0.69, 0.78, 1.16), 0.36 * daySoften);
-                  float muWind = pow(abs(n.z), 1.15);
-                  float yEWindNear = mix(yEEqNear, yEPolarNear, muWind);
-                  float yEWindFar = mix(yEEqFar, yEPolarFar, muWind);
+                  float yEWindNear = mix(yEEqNear, yEPolarNear, pow(abs(n.z), 1.15));
+                  float yEWindFar = mix(yEEqFar, yEPolarFar, pow(abs(n.z), 1.15));
                   float yEWindLocal = mix(yEWindNear, yEWindFar, ltMix);
-                  float TwindNear = mix(TeqNear, TpolarNear, muWind);
-                  float TwindFar = mix(TeqFar, TpolarFar, muWind);
-                  float TwindLocal = mix(TwindNear, TwindFar, ltMix);
-                  float recombWindLocal = 1.0 - smoothstep(2700.0, 5400.0, TwindLocal);
-                  float recombFrontLocal = smoothstep(0.18, 0.92, recombWindLocal);
                   float lanthFracLocal = smoothstep(0.30, 0.18, yEWindLocal);
-                  float recombOpacityBoost = 1.0 + (0.36 + 0.44 * lanthFracLocal) * recombFrontLocal;
-                  float lanthCurtain = clamp((0.25 + 1.05 * lanthFracLocal) * equa * (0.42 + 0.58 * smoothstep(0.20, 1.0, evoSh)) * uOpacityContrast * recombOpacityBoost, 0.0, 2.5);
-                  vec3 lanthTransfer = vec3(
-                    1.0 + 0.18 * lanthCurtain + 0.08 * recombFrontLocal,
-                    1.0 - 0.03 * lanthCurtain + 0.02 * recombFrontLocal,
-                    1.0 - 0.30 * lanthCurtain - 0.12 * recombFrontLocal
-                  );
+                  float lanthCurtain = clamp((0.25 + 1.05 * lanthFracLocal) * equa * (0.42 + 0.58 * smoothstep(0.20, 1.0, evoSh)) * uOpacityContrast, 0.0, 2.3);
+                  vec3 lanthTransfer = vec3(1.0 + 0.16 * lanthCurtain, 1.0 - 0.02 * lanthCurtain, 1.0 - 0.28 * lanthCurtain);
                   vec3 colEqTransfer = colEqLocal * lanthTransfer;
                   vec3 colRSTransfer = colRSLocal * mix(vec3(1.0), lanthTransfer, 0.20);
                   vec3 colInnerTransfer = colInnerLocal * mix(vec3(1.0), lanthTransfer, 0.45);
@@ -1444,7 +1414,7 @@
                   compFS *= shockTemporal;
                   compRS *= shockTemporal;
                   compCD *= shockTemporal;
-                  float eqTau = uOpacityContrast * pow(max(0.0, 1.0 - abs(n.z)), 1.55) * (0.55 + 0.45 * phaseRedLocal) * (0.88 + 0.24 * recombFrontLocal);
+                  float eqTau = uOpacityContrast * pow(max(0.0, 1.0 - abs(n.z)), 1.55) * (0.55 + 0.45 * phaseRedLocal);
                   float shockAtten = exp(-0.42 * eqTau);
                   float betaShock = clamp(0.08 + 0.10 * vShockNorm, 0.06, 0.24);
                   vec3 shockFlowDir = normalize(p + n * 0.15 + vec3(1e-6, 1e-6, 1e-6));
@@ -1546,11 +1516,10 @@
                   float scatterDensity = rhoForward + 0.72 * rhoContact + 0.52 * rhoCocoon + 0.45 * rhoNebula;
                   emiss += scatterDensity * (0.07 + 0.22 * albedo) * phaseScat * scatterCol;
 
-                  float lanthIon = 0.54 + 0.46 * smoothstep(0.14, 4.8, tDaysLocal);
-                  float recombOpacity = recombFrontLocal * (0.35 + 0.65 * lanthFracLocal);
-                  float blueOpacityBoost = 1.00 + (0.82 * lanthCurtain + 0.16 * phaseRedLocal) * lanthIon + 0.34 * recombOpacity;
-                  float greenOpacityBoost = 0.98 + (0.50 * lanthCurtain + 0.08 * phaseRedLocal) * (0.80 + 0.20 * lanthIon) + 0.18 * recombOpacity;
-                  float redOpacityBoost = 0.90 + 0.20 * lanthCurtain * (0.55 + 0.45 * lanthIon) + 0.08 * recombOpacity;
+                  float lanthIon = 0.55 + 0.45 * smoothstep(0.15, 4.5, tDaysLocal);
+                  float blueOpacityBoost = 1.08 + (0.92 * lanthCurtain + 0.20 * phaseRedLocal) * lanthIon;
+                  float greenOpacityBoost = 1.00 + (0.52 * lanthCurtain + 0.08 * phaseRedLocal) * (0.78 + 0.22 * lanthIon);
+                  float redOpacityBoost = 0.92 + 0.22 * lanthCurtain * (0.52 + 0.48 * lanthIon);
                   vec3 sigmaRGB = sigma * vec3(redOpacityBoost, greenOpacityBoost, blueOpacityBoost);
                   vec3 sigmaScat = sigmaRGB * albedoRGB;
                   vec3 sigmaAbs = max(sigmaRGB - sigmaScat * 0.62, vec3(1e-6));
@@ -1734,15 +1703,11 @@
 
           vec3 compressHighlights(vec3 c) {
             float y = max(luminanceOf(c), 1e-5);
+            float ySoft = log(1.0 + 0.55 * y) / 0.55;
             vec3 chrom = c / y;
-            float yLog = log(1.0 + 0.48 * y) / 0.48;
-            float yShoulder = yLog / (1.0 + 0.18 * yLog + 0.018 * yLog * yLog);
-            float chromPow = mix(0.99, 0.95, smoothstep(0.6, 12.0, y));
-            chrom = pow(max(chrom, vec3(0.0)), vec3(chromPow));
-            float sat = 1.0 + 0.06 * smoothstep(0.35, 2.6, y) - 0.12 * smoothstep(6.0, 28.0, y);
-            chrom = mix(vec3(1.0), chrom, clamp(sat, 0.78, 1.12));
-            float whiteGuard = 1.0 - 0.10 * smoothstep(10.0, 40.0, y);
-            return chrom * yShoulder * whiteGuard;
+            chrom = pow(max(chrom, vec3(0.0)), vec3(0.97));
+            float sat = 1.0 + 0.08 * smoothstep(0.45, 3.2, y);
+            return chrom * ySoft * sat;
           }
 
           void main() {
@@ -1806,16 +1771,16 @@
             outColor += uGRBCocoon * cocoonCol * (1.05 * shockRing * ringWarp + 0.50 * shockRing2 + 0.28 * shockRing3 + 0.26 * cocoonHaze + 0.30 * cocoonWing + 0.26 * axisWake);
 
             float luminance = luminanceOf(outColor);
-            float bloomThreshold = mix(0.58, 0.95, smoothstep(0.8, 4.0, luminance));
+            float bloomThreshold = mix(0.56, 0.90, smoothstep(0.8, 4.0, luminance));
             float bloomMask = smoothstep(bloomThreshold, bloomThreshold + 1.45, luminance);
             float act2BloomSupp = uAct < 2.5 ? (0.72 + 0.28 * uAct2Progress) : 1.0;
-            float bloomLimiter = 1.0 / (1.0 + 0.26 * luminance + 0.024 * luminance * luminance);
+            float bloomLimiter = 1.0 / (1.0 + 0.24 * luminance);
             vec3 bloomSeed = blurBase + volumeColor * (0.20 * act2BloomSupp + 0.08);
             vec3 bloomColor = bloomSeed * bloomMask * (0.84 * uBloomStrength) * bloomLimiter;
             vec3 chromaRef = outColor / max(luminance, 1e-5);
             float bloomLum = luminanceOf(bloomColor);
             bloomColor = mix(bloomColor, chromaRef * bloomLum, 0.58);
-            outColor += bloomColor + volumeColor * ((0.09 + 0.045 * act2BloomSupp) * uBloomStrength * bloomLimiter);
+            outColor += bloomColor + volumeColor * ((0.10 + 0.05 * act2BloomSupp) * uBloomStrength * bloomLimiter);
             outColor = compressHighlights(outColor);
 
             gl_FragColor = vec4(max(outColor, vec3(0.0)), 1.0);
@@ -2304,10 +2269,10 @@
       const TOTAL_DURATION = ACT1_DURATION + ACT2_DURATION + ACT3_DURATION;
 
       const params = {
-        timeScale: 2.4,
+        timeScale: 1.0,
         m1: 1.50,
         m2: 1.38,
-        separationScale: 1.22,
+        separationScale: 1.10,
         ejectaMass: 0.074,
         polarVel: 0.34,
         eqVel: 0.118,
@@ -2554,7 +2519,7 @@
         const dPhaseDp = 2.0 * Math.PI * (2.0 + 11.2 * p + 72.0 * Math.pow(p, 3.0)) * mScale;
         const omega = dPhaseDp / ACT1_DURATION;
 
-        const sepScale = clamp(params.separationScale, 0.75, 2.40);
+        const sepScale = clamp(params.separationScale, 0.75, 1.40);
         const sep = clamp((7.8 - 6.0 * Math.pow(p, 0.76)) * sepScale, 2.08 * sepScale, 8.0 * sepScale);
         const r1 = sep * (m2 / mTotal);
         const r2 = sep * (m1 / mTotal);
