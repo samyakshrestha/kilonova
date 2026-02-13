@@ -278,9 +278,9 @@
       <label>
         <div class="label-top">
           <span>Time Scale</span>
-          <span class="value" id="timeScaleValue">1.00x</span>
+          <span class="value" id="timeScaleValue">2.00x</span>
         </div>
-        <input id="timeScale" type="range" min="0.1" max="4" step="0.01" value="1" />
+        <input id="timeScale" type="range" min="0.1" max="4" step="0.01" value="2" />
       </label>
 
       <details open>
@@ -307,7 +307,7 @@
             <span>Inspiral Separation Scale</span>
             <span class="value" id="separationScaleValue"></span>
           </div>
-          <input id="separationScale" type="range" min="0.75" max="1.40" step="0.01" />
+          <input id="separationScale" type="range" min="0.75" max="1.40" step="0.01" value="1.40" />
         </label>
 
         <label>
@@ -405,9 +405,9 @@
         <label>
           <div class="label-top">
             <span>Auto Quality</span>
-            <span class="value" id="autoQualityValue">On</span>
+            <span class="value" id="autoQualityValue">Off</span>
           </div>
-          <input id="autoQuality" type="checkbox" checked />
+          <input id="autoQuality" type="checkbox" />
         </label>
 
         <label>
@@ -470,7 +470,8 @@
       renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
 
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x02040a);
+      const defaultBackgroundColor = new THREE.Color(0x02040a);
+      scene.background = defaultBackgroundColor;
       const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.05, 400);
       camera.position.set(31.0, 6.2, 0.0);
 
@@ -1871,6 +1872,8 @@
         uniform float uRadialVel;
         uniform float uTidalHeat;
         uniform vec3 uCompanionDir;
+        uniform vec3 uShearDir;
+        uniform float uShearHeat;
         varying vec3 vWorldPos;
         varying vec3 vWorldNormal;
         varying vec3 vLocalPos;
@@ -1958,15 +1961,21 @@
           float beaming = clamp(pow(doppler, 2.2), 0.72, 1.48);
 
           vec3 companion = normalize(uCompanionDir + vec3(1e-5));
+          vec3 shearDir = normalize(uShearDir + vec3(1e-5));
           float faceHeat = pow(max(dot(normalize(vLocalPos), companion), 0.0), 3.2);
           float shear = smoothstep(0.52, 0.90, fbm(uv * 240.0 + vec2(uTime * 0.09, -uTime * 0.06)));
           float tidalHot = uTidalHeat * (0.75 * faceHeat + 0.35 * shear * faceHeat);
           vec3 tidalCol = kelvinToRGB(kObs * 1.12);
+          float shearBand = pow(max(dot(N, companion), 0.0), 1.85) * smoothstep(0.20, 0.95, 1.0 - abs(dot(N, shearDir)));
+          float shearFil = smoothstep(0.46, 0.90, fbm(uv * 320.0 + vec2(uTime * 0.13, -uTime * 0.08)));
+          float shearHot = uShearHeat * shearBand * (0.58 + 0.42 * shearFil);
+          vec3 shearCol = kelvinToRGB(kObs * 1.20);
 
           vec3 col = thermal * (0.98 + micro * 0.34 + hotspots * 0.20);
           col *= limb * beaming;
           col = mix(col, col * 1.08 + uBaseColor * 0.25, 0.45);
           col += tidalCol * tidalHot * 0.75;
+          col += shearCol * shearHot * 0.70;
           col += vec3(0.23, 0.56, 1.05) * fres * 0.42;
 
           float outIntensity = mix(1.2, 2.15, clamp(uIntensity, 0.0, 2.2));
@@ -1986,6 +1995,8 @@
         uRadialVel: { value: 0.0 },
         uTidalHeat: { value: 0.0 },
         uCompanionDir: { value: new THREE.Vector3(1, 0, 0) },
+        uShearDir: { value: new THREE.Vector3(0, 1, 0) },
+        uShearHeat: { value: 0.0 },
         uTime: { value: 0.0 },
       };
 
@@ -2001,6 +2012,8 @@
           uRadialVel: { value: uniforms.uRadialVel.value },
           uTidalHeat: { value: uniforms.uTidalHeat.value },
           uCompanionDir: { value: uniforms.uCompanionDir.value.clone() },
+          uShearDir: { value: uniforms.uShearDir.value.clone() },
+          uShearHeat: { value: uniforms.uShearHeat.value },
           uTime: { value: uniforms.uTime.value },
         };
       }
@@ -2027,10 +2040,20 @@
       scene.add(star2);
 
       const precursorBridgeVertexShader = /* glsl */ `
+        uniform float uTime;
+        uniform float uStrength;
         varying vec2 vUv;
         void main() {
           vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          vec3 p = position;
+          float y = uv.y * 2.0 - 1.0;
+          float mid = 1.0 - abs(y);
+          // Gentle plume widening from the L1 throat into both stars.
+          p.xz *= 0.90 + 0.22 * mid + 0.16 * uStrength;
+          // Kelvin-Helmholtz-like rolls without spring-like geometry.
+          float roll = sin(uv.y * 13.0 - uTime * 1.4) * (0.05 + 0.05 * uStrength) * mid;
+          p.x += roll;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
         }
       `;
 
@@ -2041,14 +2064,19 @@
         varying vec2 vUv;
 
         void main() {
-          float across = abs(vUv.x - 0.5) * 2.0;
-          float along = abs(vUv.y - 0.5) * 2.0;
-          float core = exp(-across * across * 22.0) * (1.0 - smoothstep(0.84, 1.0, along));
-          float filament = 0.62 + 0.38 * sin(vUv.y * 110.0 - uTime * 7.6 + sin(vUv.x * 26.0));
-          float knots = exp(-pow(vUv.y - 0.5 + 0.10 * sin(uTime * 1.9), 2.0) * 24.0) * exp(-across * across * 8.5);
-          float alpha = (core * filament + 0.42 * knots) * uStrength * 0.72;
-          vec3 col = mix(vec3(0.48, 0.70, 1.25), vec3(0.92, 0.82, 1.30), 0.35 + 0.65 * filament);
-          gl_FragColor = vec4(col * alpha * 1.75, alpha);
+          float x = (vUv.x - 0.5) * 2.0;
+          float y = vUv.y * 2.0 - 1.0;
+          float mid = 1.0 - abs(y);
+          float throat = exp(-x * x * (18.0 + 8.0 * mid));
+          float sheet = exp(-pow(abs(x) / max(0.08, 0.20 + 0.22 * abs(y)), 1.7));
+          float shear = 0.5 + 0.5 * sin(vUv.y * 36.0 - uTime * 2.6 + sin(vUv.x * 10.0 + uTime * 0.35));
+          float shearRim = smoothstep(0.35, 0.95, shear) * exp(-x * x * 3.8) * mid;
+          float alpha = (0.82 * throat + 0.55 * sheet + 0.46 * shearRim) * uStrength * (0.55 + 0.45 * mid);
+          alpha *= smoothstep(0.0, 0.07, mid);
+          vec3 colCore = vec3(0.90, 0.94, 1.30);
+          vec3 colRim = vec3(0.46, 0.70, 1.18);
+          vec3 col = mix(colRim, colCore, clamp(0.65 * throat + 0.25 * shearRim, 0.0, 1.0));
+          gl_FragColor = vec4(col * alpha * 1.62, alpha);
         }
       `;
 
@@ -2269,10 +2297,10 @@
       const TOTAL_DURATION = ACT1_DURATION + ACT2_DURATION + ACT3_DURATION;
 
       const params = {
-        timeScale: 1.0,
+        timeScale: 2.0,
         m1: 1.50,
         m2: 1.38,
-        separationScale: 1.10,
+        separationScale: 1.40,
         ejectaMass: 0.074,
         polarVel: 0.34,
         eqVel: 0.118,
@@ -2285,7 +2313,7 @@
         chromaticAberration: 0.12,
         sharpen: 0.72,
         autoQuality: false,
-        qualityTier: 0,
+        qualityTier: 1,
       };
 
       const state = {
@@ -2323,6 +2351,8 @@
       const tmpVel2 = new THREE.Vector3();
       const tmpView1 = new THREE.Vector3();
       const tmpView2 = new THREE.Vector3();
+      const tmpShear1 = new THREE.Vector3();
+      const tmpShear2 = new THREE.Vector3();
       const prevCamPos = camera.position.clone();
       const prevCamQuat = camera.quaternion.clone();
 
@@ -2346,6 +2376,27 @@
         const logMin = Math.log(minVal);
         const logMax = Math.log(maxVal);
         return Math.exp(logMin + (logMax - logMin) * x);
+      }
+
+      function inspiralPhasePN(p, eta, massScale, chirpScale) {
+        const pp = clamp(p, 0, 1);
+        const tau = Math.max(0.028, 1.0 - pp);
+        const xPN = 0.165 * Math.pow(tau, -0.25);
+        const c1 = 743.0 / 336.0 + (11.0 * eta) / 4.0;
+        const c15 = -4.0 * Math.PI;
+        const c2 = 34103.0 / 18144.0 + (13661.0 * eta) / 2016.0 + (59.0 * eta * eta) / 18.0;
+        const phaseBaseCycles = (2.0 * pp + 5.6 * pp * pp + 18.0 * Math.pow(pp, 4.0)) * massScale;
+        const pnFactor =
+          1.0 +
+          0.045 * c1 * xPN +
+          0.0085 * c15 * Math.pow(xPN, 1.5) +
+          0.0022 * c2 * xPN * xPN;
+        return 2.0 * Math.PI * phaseBaseCycles * clamp(pnFactor, 0.55, 2.6) * Math.pow(chirpScale, 0.10);
+      }
+
+      function loveNumberFromMass(massMsun) {
+        // Lower-mass neutron stars are generally less compact and more deformable.
+        return clamp(0.145 - 0.052 * ((massMsun - 1.2) / 1.8), 0.055, 0.155);
       }
 
       function setQualityTier(tier, force = false) {
@@ -2512,15 +2563,24 @@
         const m1 = params.m1;
         const m2 = params.m2;
         const mTotal = m1 + m2;
+        const eta = (m1 * m2) / (mTotal * mTotal);
+        const chirpMass = Math.pow(m1 * m2, 3.0 / 5.0) / Math.pow(mTotal, 1.0 / 5.0);
+        const chirpScale = clamp(chirpMass / 1.22, 0.72, 1.5);
         const mScale = clamp(mTotal / 2.8, 0.72, 1.7);
 
-        const chirpBoost = Math.pow(Math.max(0.04, 1.0 - 0.965 * p), -0.375);
-        const phase = 2.0 * Math.PI * (2.0 * p + 5.6 * p * p + 18.0 * Math.pow(p, 4.0)) * mScale;
-        const dPhaseDp = 2.0 * Math.PI * (2.0 + 11.2 * p + 72.0 * Math.pow(p, 3.0)) * mScale;
-        const omega = dPhaseDp / ACT1_DURATION;
+        const phase = inspiralPhasePN(p, eta, mScale, chirpScale);
+        const dp = 0.0015;
+        const phasePrev = inspiralPhasePN(clamp(p - dp, 0, 1), eta, mScale, chirpScale);
+        const phaseNext = inspiralPhasePN(clamp(p + dp, 0, 1), eta, mScale, chirpScale);
+        const omega = Math.max(0.03, (phaseNext - phasePrev) / (2.0 * dp * ACT1_DURATION));
+        const chirpBoost = Math.pow(Math.max(0.04, 1.0 - 0.965 * p), -0.39);
 
         const sepScale = clamp(params.separationScale, 0.75, 1.40);
-        const sep = clamp((7.8 - 6.0 * Math.pow(p, 0.76)) * sepScale, 2.08 * sepScale, 8.0 * sepScale);
+        const sepBase = clamp((7.8 - 6.0 * Math.pow(p, 0.76)) * sepScale, 2.08 * sepScale, 8.0 * sepScale);
+        const gmEff = (265.0 + 42.0 * eta) * mScale;
+        const sepKepler = Math.cbrt((gmEff * sepScale) / (omega * omega + 1e-4));
+        const sepMix = 0.28 + 0.56 * smoothstep(0.38, 1.0, p);
+        const sep = clamp(sepBase * (1.0 - sepMix) + sepKepler * sepMix, 2.02 * sepScale, 8.6 * sepScale);
         const r1 = sep * (m2 / mTotal);
         const r2 = sep * (m1 / mTotal);
 
@@ -2533,35 +2593,61 @@
         star1.scale.setScalar(1);
         star2.scale.setScalar(1);
 
-        const tidal = clamp(Math.pow(smoothstep(0.50, 1.0, p), 1.05) * 0.92, 0.0, 0.98);
-        const barMode = clamp(Math.pow(smoothstep(0.62, 1.0, p), 1.35) * (0.25 + 0.75 * tidal), 0.0, 1.0);
-        const tidalHeat = clamp(Math.pow(smoothstep(0.70, 1.0, p), 1.20) * (0.35 + 0.65 * tidal), 0.0, 1.0);
+        const tidalProxy = Math.pow(clamp(2.15 / Math.max(sep, 1e-4), 0.0, 1.35), 3.0);
+        const k2_1 = loveNumberFromMass(m1);
+        const k2_2 = loveNumberFromMass(m2);
+        const tidalRamp = 0.55 + 0.45 * smoothstep(0.50, 1.0, p);
+        const tidal1 = clamp(5.1 * k2_1 * (m2 / m1) * tidalProxy * tidalRamp, 0.0, 0.98);
+        const tidal2 = clamp(5.1 * k2_2 * (m1 / m2) * tidalProxy * tidalRamp, 0.0, 0.98);
+        const tidalMean = 0.5 * (tidal1 + tidal2);
+        const barMode = clamp(Math.pow(smoothstep(0.58, 1.0, p), 1.15) * (0.20 + 0.80 * tidalMean), 0.0, 1.0);
+        const orbitalShear = clamp(omega * sep * 0.082, 0.0, 2.6);
+        const shearTurnOn = smoothstep(0.55, 1.0, p) * smoothstep(0.35, 1.35, orbitalShear);
+        const tidalHeat1 = clamp((0.28 + 0.72 * tidal1) * (0.42 + 0.58 * shearTurnOn), 0.0, 1.0);
+        const tidalHeat2 = clamp((0.28 + 0.72 * tidal2) * (0.42 + 0.58 * shearTurnOn), 0.0, 1.0);
         tmpDir12.subVectors(star2.position, star1.position).normalize();
         tmpDir21.copy(tmpDir12).multiplyScalar(-1);
 
-        starMat1.uniforms.uDeform.value = tidal;
-        starMat2.uniforms.uDeform.value = tidal;
+        starMat1.uniforms.uDeform.value = tidal1;
+        starMat2.uniforms.uDeform.value = tidal2;
         starMat1.uniforms.uDeformDir.value.copy(tmpDir12);
         starMat2.uniforms.uDeformDir.value.copy(tmpDir21);
         starMat1.uniforms.uCompanionDir.value.copy(tmpDir12);
         starMat2.uniforms.uCompanionDir.value.copy(tmpDir21);
         starMat1.uniforms.uBarMode.value = barMode;
         starMat2.uniforms.uBarMode.value = barMode * 0.97;
-        starMat1.uniforms.uTidalHeat.value = tidalHeat;
-        starMat2.uniforms.uTidalHeat.value = tidalHeat * 0.96;
+        starMat1.uniforms.uTidalHeat.value = tidalHeat1;
+        starMat2.uniforms.uTidalHeat.value = tidalHeat2;
 
         tmpVel1.set(-s * r1 * omega, c * r1 * omega, zVel);
         tmpVel2.set(s * r2 * omega, -c * r2 * omega, -zVel);
+        tmpShear1.copy(tmpVel1);
+        if (tmpShear1.lengthSq() < 1e-8) {
+          tmpShear1.set(0, 1, 0);
+        } else {
+          tmpShear1.normalize();
+        }
+        tmpShear2.copy(tmpVel2);
+        if (tmpShear2.lengthSq() < 1e-8) {
+          tmpShear2.set(0, -1, 0);
+        } else {
+          tmpShear2.normalize();
+        }
+        starMat1.uniforms.uShearDir.value.copy(tmpShear1);
+        starMat2.uniforms.uShearDir.value.copy(tmpShear2);
+        starMat1.uniforms.uShearHeat.value = clamp(shearTurnOn * (0.48 + 0.52 * tidal1), 0.0, 1.0);
+        starMat2.uniforms.uShearHeat.value = clamp(shearTurnOn * (0.48 + 0.52 * tidal2), 0.0, 1.0);
+
         tmpView1.copy(camera.position).sub(star1.position).normalize();
         tmpView2.copy(camera.position).sub(star2.position).normalize();
-        const betaScale = 0.022;
+        const betaScale = 0.021 + 0.003 * smoothstep(0.35, 1.0, p);
         const radialVel1 = clamp(tmpVel1.dot(tmpView1) * betaScale, -0.18, 0.18);
         const radialVel2 = clamp(tmpVel2.dot(tmpView2) * betaScale, -0.18, 0.18);
         starMat1.uniforms.uRadialVel.value = radialVel1;
         starMat2.uniforms.uRadialVel.value = radialVel2;
 
-        const temp = clamp(0.30 + 0.62 * smoothstep(0.12, 1.0, p), 0.0, 1.0);
-        const intensity = 0.96 + 0.62 * smoothstep(0.2, 1.0, p) + 0.06 * chirpBoost;
+        const temp = clamp(0.27 + 0.60 * smoothstep(0.12, 1.0, p) + 0.10 * shearTurnOn, 0.0, 1.0);
+        const intensity = 0.94 + 0.58 * smoothstep(0.2, 1.0, p) + 0.06 * chirpBoost + 0.12 * shearTurnOn;
         starMat1.uniforms.uTemp.value = temp;
         starMat2.uniforms.uTemp.value = temp * 0.96;
         starMat1.uniforms.uIntensity.value = intensity;
@@ -2576,7 +2662,7 @@
         remnant.visible = false;
         state.remnantFade = 0.0;
 
-        const bridgeStrength = clamp(Math.pow(smoothstep(0.74, 1.0, p), 1.6) * (0.35 + 0.65 * tidal), 0.0, 1.0);
+        const bridgeStrength = clamp(Math.pow(smoothstep(0.70, 1.0, p), 1.38) * (0.25 + 0.75 * tidalMean), 0.0, 1.0);
         if (bridgeStrength > 0.01) {
           tmpBridgeDir.subVectors(star2.position, star1.position);
           const bridgeLen = tmpBridgeDir.length();
@@ -2585,7 +2671,7 @@
             precursorBridge.position.copy(tmpBridgeMid);
             tmpBridgeDir.multiplyScalar(1.0 / bridgeLen);
             precursorBridge.quaternion.setFromUnitVectors(bridgeUp, tmpBridgeDir);
-            const bridgeRadius = 0.08 + 0.16 * bridgeStrength;
+            const bridgeRadius = (0.068 + 0.102 * bridgeStrength) * (0.92 + 0.20 * eta);
             precursorBridge.scale.set(bridgeRadius, bridgeLen * 0.97, bridgeRadius);
             precursorBridge.visible = true;
             precursorBridge.material.uniforms.uTime.value = elapsed;
@@ -2923,7 +3009,7 @@
 
       window.addEventListener("resize", onResize);
 
-      setQualityTier(0, true);
+      setQualityTier(params.qualityTier, true);
       setDefaultCameraView();
 
       const clock = new THREE.Clock();
