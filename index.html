@@ -566,14 +566,52 @@
         depthBuffer: true,
       });
 
-      const postScene = new THREE.Scene();
       const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
       const postGeometry = new THREE.PlaneGeometry(2, 2);
 
-      const postShader = {
+      function createColorTarget(width, height) {
+        return new THREE.WebGLRenderTarget(width, height, {
+          type: rtType,
+          format: THREE.RGBAFormat,
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          depthBuffer: false,
+        });
+      }
+
+      const volumeScaleByTier = [0.70, 0.62, 0.54, 0.48];
+      let currentVolumeScale = volumeScaleByTier[0];
+      function getVolumeDimensions(width, height) {
+        return {
+          w: Math.max(2, Math.floor(width * currentVolumeScale)),
+          h: Math.max(2, Math.floor(height * currentVolumeScale)),
+        };
+      }
+
+      const initialVolSize = getVolumeDimensions(window.innerWidth, window.innerHeight);
+      const volumeCurrentTarget = createColorTarget(initialVolSize.w, initialVolSize.h);
+      const volumeHistoryTargetA = createColorTarget(initialVolSize.w, initialVolSize.h);
+      const volumeHistoryTargetB = createColorTarget(initialVolSize.w, initialVolSize.h);
+      let volumeHistoryRead = volumeHistoryTargetA;
+      let volumeHistoryWrite = volumeHistoryTargetB;
+
+      function swapVolumeHistoryTargets() {
+        const temp = volumeHistoryRead;
+        volumeHistoryRead = volumeHistoryWrite;
+        volumeHistoryWrite = temp;
+      }
+
+      const fullscreenVertex = /* glsl */ `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+      `;
+
+      const volumeShader = {
         uniforms: {
-          tBase: { value: baseTarget.texture },
-          uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+          uResolution: { value: new THREE.Vector2(initialVolSize.w, initialVolSize.h) },
           uCamPos: { value: new THREE.Vector3() },
           uInvProj: { value: new THREE.Matrix4() },
           uInvView: { value: new THREE.Matrix4() },
@@ -592,30 +630,16 @@
           uJetAngle: { value: 12.0 },
           uJetIntensity: { value: 1.2 },
           uRemnantLum: { value: 1.1 },
-          uSteps: { value: 128.0 },
+          uSteps: { value: 140.0 },
           uNoiseOctaves: { value: 5.0 },
           uStepScale: { value: 1.0 },
           uNoiseScale: { value: 1.0 },
-          uBloomStrength: { value: 1.25 },
-          uChromAb: { value: 0.08 },
-          uSharpen: { value: 0.65 },
-          uStarScreen1: { value: new THREE.Vector2(-10, -10) },
-          uStarScreen2: { value: new THREE.Vector2(-10, -10) },
-          uStarVis1: { value: 0.0 },
-          uStarVis2: { value: 0.0 },
         },
-        vertexShader: /* glsl */ `
-          varying vec2 vUv;
-          void main() {
-            vUv = uv;
-            gl_Position = vec4(position.xy, 0.0, 1.0);
-          }
-        `,
+        vertexShader: fullscreenVertex,
         fragmentShader: /* glsl */ `
           precision highp float;
 
           varying vec2 vUv;
-          uniform sampler2D tBase;
           uniform vec2 uResolution;
           uniform vec3 uCamPos;
           uniform mat4 uInvProj;
@@ -639,15 +663,8 @@
           uniform float uNoiseOctaves;
           uniform float uStepScale;
           uniform float uNoiseScale;
-          uniform float uBloomStrength;
-          uniform float uChromAb;
-          uniform float uSharpen;
-          uniform vec2 uStarScreen1;
-          uniform vec2 uStarScreen2;
-          uniform float uStarVis1;
-          uniform float uStarVis2;
 
-          #define MAX_STEPS 128
+          #define MAX_STEPS 144
 
           float hash11(float p) {
             p = fract(p * 0.1031);
@@ -713,8 +730,255 @@
             return vec2(-b - h, -b + h);
           }
 
+          void main() {
+            vec3 accum = vec3(0.0);
+
+            if (uAct >= 1.5) {
+              vec2 ndc = vUv * 2.0 - 1.0;
+              vec4 clip = vec4(ndc, 1.0, 1.0);
+              vec4 view = uInvProj * clip;
+              view /= max(view.w, 1e-6);
+              vec3 rd = normalize((uInvView * vec4(view.xyz, 0.0)).xyz);
+              vec3 ro = uCamPos;
+
+              float boundRadius = (17.0 + 7.5 * uEnergyScale);
+              vec2 hit = raySphere(ro, rd, boundRadius);
+              if (hit.x <= hit.y) {
+                float distToCenter = length(vUv - vec2(0.5));
+                float centerFocus = 1.0 - smoothstep(0.12, 0.86, distToCenter);
+                float peripheryFactor = mix(0.42, 1.0, centerFocus);
+                float earlyBurst = uAct < 2.5 ? (0.86 + 0.78 * (1.0 - uAct2Progress)) : (1.0 + 0.40 * exp(-uAct3Progress * 5.0));
+                float localSteps = floor(max(20.0, uSteps * uStepScale * peripheryFactor * earlyBurst));
+                float localOctaves = max(2.0, floor(uNoiseOctaves * uNoiseScale * mix(0.55, 1.0, centerFocus)));
+
+                float tNear = max(hit.x, 0.0);
+                float tFar = hit.y;
+                float totalDist = max(1e-4, tFar - tNear);
+                float dt = totalDist / max(1.0, localSteps);
+                float jitter = (hash11(dot(vUv, vec2(113.17, 91.73)) + uTime) - 0.5) * dt;
+
+                float evo = clamp(uAct3Progress, 0.0, 1.0);
+                float mNorm = clamp((uEjectaMass - 0.01) / 0.19, 0.0, 1.0);
+                float densityScale = mix(0.6, 2.0, mNorm);
+                float opacityScale = mix(0.7, 2.6, mNorm);
+                float vpScale = uPolarVel / 0.30;
+                float veScale = uEqVel / 0.10;
+
+                float Rp = mix(1.1, 13.2 * uEnergyScale * vpScale, pow(evo, 0.78));
+                float Re = mix(0.95, 9.1 * uEnergyScale * veScale, pow(evo, 0.88));
+                float thickP = mix(0.32, 1.05, evo);
+                float thickE = mix(0.42, 1.42, evo);
+                float Rrs = mix(Re, Rp, 0.62);
+
+                float tDays = max(uDays, 0.03);
+                float heatNorm = clamp(pow(tDays, -1.3) / 95.0, 0.06, 1.2);
+                float collisionCore = uAct < 2.5 ? 1.0 - smoothstep(0.55, 1.0, uAct2Progress) : exp(-evo * 6.5);
+
+                vec3 colorBlue = vec3(0.68, 0.83, 1.00);
+                vec3 colorPurple = vec3(0.91, 0.52, 1.00);
+                vec3 colorRed = vec3(1.00, 0.42, 0.16);
+                vec3 colorJet = vec3(0.74, 0.93, 1.36);
+
+                float pBlueShift = smoothstep(0.18, 0.62, evo);
+                float eRedShift = smoothstep(0.30, 1.00, evo);
+                vec3 colPolar = mix(colorBlue, colorPurple, pBlueShift);
+                vec3 colEq = mix(vec3(0.83, 0.44, 0.62), colorRed, eRedShift);
+                vec3 colRS = vec3(1.00, 0.48, 0.95);
+                vec3 colRT = mix(vec3(0.90, 0.58, 1.00), vec3(1.00, 0.56, 0.28), eRedShift);
+
+                float trans = 1.0;
+                float t = tNear + jitter;
+
+                for (int i = 0; i < MAX_STEPS; i++) {
+                  if (float(i) >= localSteps || t > tFar) {
+                    break;
+                  }
+
+                  vec3 p = ro + rd * t;
+                  float r = length(p);
+                  vec3 n = p / max(r, 1e-5);
+
+                  float pole = pow(abs(n.z), 3.7);
+                  float equa = pow(max(0.0, 1.0 - abs(n.z)), 2.05);
+
+                  float rhoP = exp(-pow((r - Rp) / thickP, 2.0)) * pole;
+                  float rhoE = exp(-pow((r - Re) / thickE, 2.0)) * equa;
+
+                  float rsThickness = mix(0.18, 0.45, evo);
+                  float rhoRS = exp(-pow((r - Rrs) / rsThickness, 2.0)) * mix(0.75 * equa, 0.65 * pole, 0.4);
+
+                  float rhoRT = 0.0;
+                  float rhoJet = 0.0;
+                  float rhoCocoon = 0.0;
+                  float coarseShell = rhoP + rhoE + rhoRS;
+                  float stepMul = 1.0;
+                  if (coarseShell < 0.0018) {
+                    stepMul = 1.58;
+                  }
+
+                  if (coarseShell > 0.004 || abs(n.z) > 0.78) {
+                    float rtLayer = exp(-pow((r - mix(Re, Rp, 0.52)) / (thickE * 1.1 + 0.08), 2.0));
+                    float rtGrowth = pow(evo, 1.55) * uRTStrength;
+                    vec3 warpP = p * 0.85 + vec3(0.0, 0.0, uTime * 0.23);
+                    float warp = fbm(warpP * 0.95, localOctaves);
+                    float fingers = smoothstep(0.50, 0.89, fbm(warpP * 2.15 + warp * 2.3 * n, localOctaves));
+                    float phi = atan(n.y, n.x);
+                    float branch = 0.5 + 0.5 * sin(phi * 13.0 + uTime * 0.74 + warp * 5.3);
+                    rhoRT = rtLayer * fingers * (0.35 + 1.75 * branch) * rtGrowth;
+
+                    float angle = radians(max(4.0, uJetAngle));
+                    float axisR = length(p.xy);
+                    float coneR = abs(p.z) * tan(angle) + 0.08;
+                    float jetCore = exp(-pow(axisR / (coneR * 0.58), 2.0));
+                    float along = smoothstep(0.25, 2.5, abs(p.z));
+                    float jetNoise = 0.54 + 0.46 * fbm(vec3(axisR * 3.7, p.z * 1.2, uTime * 0.9), localOctaves);
+                    float jetTipPos = Rp * 1.03 + (1.2 + 0.8 * collisionCore) * (1.0 - 0.35 * evo);
+                    float jetTip = exp(-pow((abs(p.z) - jetTipPos) / (0.48 + 0.36 * evo), 2.0)) * exp(-pow(axisR / (0.62 + 0.45 * evo), 2.0));
+                    rhoJet = (jetCore * along * jetNoise + 1.35 * jetTip) * uJetIntensity * (1.0 - smoothstep(Rp * 1.36, Rp * 2.12, r));
+                    rhoCocoon = exp(-pow((axisR - coneR * 1.18) / (0.18 + 0.20 * evo), 2.0)) * smoothstep(0.35, 2.6, abs(p.z)) * exp(-0.14 * abs(p.z));
+                  }
+
+                  float rhoAmbient = exp(-pow((r - Rp * 1.16) / (thickP * 0.9 + 0.18), 2.0)) * 0.22;
+
+                  float eqEmergence = smoothstep(0.20, 0.95, evo);
+                  float polarFade = 1.0 - smoothstep(0.28, 0.98, evo);
+
+                  float boundaryP = exp(-pow((r - Rp) / (thickP * 0.55 + 1e-3), 2.0));
+                  float boundaryE = exp(-pow((r - Re) / (thickE * 0.55 + 1e-3), 2.0));
+                  float shockBoost = 1.0 + 1.4 * (boundaryP * boundaryE + 0.45 * boundaryP);
+
+                  vec3 emiss = vec3(0.0);
+                  emiss += rhoP * (1.65 * polarFade + 0.45) * colPolar;
+                  emiss += rhoE * (0.45 + 1.15 * eqEmergence) * colEq;
+                  emiss += rhoRS * 1.95 * colRS;
+                  emiss += rhoRT * 1.20 * colRT;
+                  emiss += rhoJet * 2.10 * colorJet;
+                  emiss += rhoCocoon * (1.10 + 0.85 * collisionCore) * vec3(0.62, 0.82, 1.28);
+                  emiss += rhoAmbient * 0.55 * vec3(0.92, 0.64, 0.86);
+                  emiss *= heatNorm * shockBoost;
+
+                  float corePulse = 0.68 + 0.32 * sin(uTime * 9.0);
+                  float coreGlow = exp(-pow(r / 0.36, 2.0)) * (0.95 + 0.8 * corePulse) * uRemnantLum;
+                  emiss += coreGlow * vec3(2.0, 1.7, 2.4);
+
+                  float blastHalo = 0.0;
+                  if (uAct < 2.5) {
+                    float blastR = 1.5 + 8.0 * uAct2Progress;
+                    float blast = exp(-pow((r - blastR) / (0.22 + 0.35 * uAct2Progress), 2.0));
+                    blastHalo = blast * uCollisionFlash;
+                    emiss += blastHalo * vec3(4.8, 3.6, 2.8);
+                    emiss += exp(-pow(r / 1.15, 2.0)) * uCollisionFlash * vec3(6.6, 5.8, 8.0);
+                  } else {
+                    float earlyShock = exp(-evo * 7.0);
+                    float blastR3 = mix(2.1, Rp * 0.95, smoothstep(0.0, 0.30, evo));
+                    blastHalo = exp(-pow((r - blastR3) / (0.28 + 0.46 * evo), 2.0)) * earlyShock * (0.75 + 0.5 * uEnergyScale);
+                    emiss += blastHalo * vec3(1.4, 1.1, 1.7);
+                  }
+
+                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.27 + rhoCocoon * 0.42 + rhoAmbient * 0.4 + blastHalo * 0.3);
+                  sigma *= opacityScale * densityScale * 0.34;
+
+                  float dtEff = dt * stepMul;
+                  if (sigma < 0.0015 && coarseShell < 0.0024 && rhoJet < 0.0012) {
+                    t += dtEff;
+                    continue;
+                  }
+
+                  float alpha = 1.0 - exp(-sigma * dtEff);
+                  vec3 contrib = emiss * alpha;
+                  accum += trans * contrib;
+                  trans *= (1.0 - alpha);
+                  t += dtEff;
+
+                  if (trans < 0.01) {
+                    break;
+                  }
+                }
+              }
+            }
+
+            gl_FragColor = vec4(max(accum, vec3(0.0)), 1.0);
+          }
+        `,
+      };
+
+      const temporalShader = {
+        uniforms: {
+          tCurrent: { value: volumeCurrentTarget.texture },
+          tHistory: { value: volumeHistoryRead.texture },
+          uHistoryBlend: { value: 0.0 },
+          uHistoryReset: { value: 1.0 },
+          uTemporalClamp: { value: 0.55 },
+        },
+        vertexShader: fullscreenVertex,
+        fragmentShader: /* glsl */ `
+          precision highp float;
+          varying vec2 vUv;
+          uniform sampler2D tCurrent;
+          uniform sampler2D tHistory;
+          uniform float uHistoryBlend;
+          uniform float uHistoryReset;
+          uniform float uTemporalClamp;
+
+          void main() {
+            vec3 current = texture2D(tCurrent, vUv).rgb;
+            vec3 history = texture2D(tHistory, vUv).rgb;
+
+            vec3 low = current - vec3(uTemporalClamp);
+            vec3 high = current + vec3(uTemporalClamp);
+            history = clamp(history, low, high);
+
+            float blend = clamp(uHistoryBlend, 0.0, 0.98);
+            vec3 accumulated = mix(current, history, blend);
+            vec3 outColor = mix(accumulated, current, step(0.5, uHistoryReset));
+            gl_FragColor = vec4(max(outColor, vec3(0.0)), 1.0);
+          }
+        `,
+      };
+
+      const compositeShader = {
+        uniforms: {
+          tBase: { value: baseTarget.texture },
+          tVolume: { value: volumeHistoryRead.texture },
+          uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+          uVolumeResolution: { value: new THREE.Vector2(initialVolSize.w, initialVolSize.h) },
+          uBloomStrength: { value: 1.25 },
+          uChromAb: { value: 0.08 },
+          uSharpen: { value: 0.65 },
+          uStarScreen1: { value: new THREE.Vector2(-10, -10) },
+          uStarScreen2: { value: new THREE.Vector2(-10, -10) },
+          uStarVis1: { value: 0.0 },
+          uStarVis2: { value: 0.0 },
+        },
+        vertexShader: fullscreenVertex,
+        fragmentShader: /* glsl */ `
+          precision highp float;
+          varying vec2 vUv;
+          uniform sampler2D tBase;
+          uniform sampler2D tVolume;
+          uniform vec2 uResolution;
+          uniform vec2 uVolumeResolution;
+          uniform float uBloomStrength;
+          uniform float uChromAb;
+          uniform float uSharpen;
+          uniform vec2 uStarScreen1;
+          uniform vec2 uStarScreen2;
+          uniform float uStarVis1;
+          uniform float uStarVis2;
+
           vec3 sampleBase(vec2 uv) {
             return texture2D(tBase, clamp(uv, 0.0, 1.0)).rgb;
+          }
+
+          vec3 sampleVolume(vec2 uv) {
+            vec2 texel = 1.0 / uVolumeResolution;
+            vec3 c = texture2D(tVolume, clamp(uv, 0.0, 1.0)).rgb;
+            vec3 n0 = texture2D(tVolume, clamp(uv + vec2(texel.x, 0.0), 0.0, 1.0)).rgb;
+            vec3 n1 = texture2D(tVolume, clamp(uv - vec2(texel.x, 0.0), 0.0, 1.0)).rgb;
+            vec3 n2 = texture2D(tVolume, clamp(uv + vec2(0.0, texel.y), 0.0, 1.0)).rgb;
+            vec3 n3 = texture2D(tVolume, clamp(uv - vec2(0.0, texel.y), 0.0, 1.0)).rgb;
+            vec3 blur = (n0 + n1 + n2 + n3) * 0.25;
+            return max(c + (c - blur) * 0.34, vec3(0.0));
           }
 
           vec3 starAura(vec2 uv, vec2 center, float vis) {
@@ -748,168 +1012,49 @@
             vec3 blurBase = (b0 + b1 + b2 + b3) * 0.25;
             vec3 sceneColor = max(caColor + (caColor - blurBase) * (uSharpen * 1.25), vec3(0.0));
 
-            vec3 accum = vec3(0.0);
-
-            if (uAct >= 1.5) {
-              vec2 ndc = vUv * 2.0 - 1.0;
-              vec4 clip = vec4(ndc, 1.0, 1.0);
-              vec4 view = uInvProj * clip;
-              view /= max(view.w, 1e-6);
-              vec3 rd = normalize((uInvView * vec4(view.xyz, 0.0)).xyz);
-              vec3 ro = uCamPos;
-
-              float boundRadius = (15.0 + 6.0 * uEnergyScale);
-              vec2 hit = raySphere(ro, rd, boundRadius);
-              if (hit.x <= hit.y) {
-                float centerFocus = 1.0 - smoothstep(0.12, 0.86, distToCenter);
-                float peripheryFactor = mix(0.48, 1.0, centerFocus);
-                float flashHeavy = smoothstep(0.4, 1.8, uCollisionFlash);
-                float flashFactor = mix(1.0, 0.56, flashHeavy);
-                float localSteps = floor(max(22.0, uSteps * uStepScale * peripheryFactor * flashFactor));
-                float localOctaves = max(2.0, floor(uNoiseOctaves * uNoiseScale * mix(0.6, 1.0, centerFocus)));
-
-                float tNear = max(hit.x, 0.0);
-                float tFar = hit.y;
-                float totalDist = max(1e-4, tFar - tNear);
-                float dt = totalDist / max(1.0, localSteps);
-                float jitter = (hash11(dot(vUv, vec2(113.17, 91.73)) + uTime) - 0.5) * dt;
-
-                float evo = clamp(uAct3Progress, 0.0, 1.0);
-                float mNorm = clamp((uEjectaMass - 0.01) / 0.19, 0.0, 1.0);
-                float densityScale = mix(0.6, 2.0, mNorm);
-                float opacityScale = mix(0.7, 2.6, mNorm);
-                float vpScale = uPolarVel / 0.30;
-                float veScale = uEqVel / 0.10;
-
-                float Rp = mix(1.2, 12.4 * uEnergyScale * vpScale, pow(evo, 0.82));
-                float Re = mix(0.9, 8.7 * uEnergyScale * veScale, pow(evo, 0.9));
-                float thickP = mix(0.35, 1.0, evo);
-                float thickE = mix(0.45, 1.35, evo);
-                float Rrs = mix(Re, Rp, 0.62);
-
-                float tDays = max(uDays, 0.03);
-                float heatNorm = clamp(pow(tDays, -1.3) / 95.0, 0.06, 1.2);
-
-                vec3 colorBlue = vec3(0.68, 0.83, 1.00);
-                vec3 colorPurple = vec3(0.91, 0.52, 1.00);
-                vec3 colorRed = vec3(1.00, 0.42, 0.16);
-                vec3 colorJet = vec3(0.74, 0.93, 1.36);
-
-                float pBlueShift = smoothstep(0.18, 0.62, evo);
-                float eRedShift = smoothstep(0.30, 1.00, evo);
-                vec3 colPolar = mix(colorBlue, colorPurple, pBlueShift);
-                vec3 colEq = mix(vec3(0.83, 0.44, 0.62), colorRed, eRedShift);
-                vec3 colRS = vec3(1.00, 0.48, 0.95);
-                vec3 colRT = mix(vec3(0.90, 0.58, 1.00), vec3(1.00, 0.56, 0.28), eRedShift);
-
-                float trans = 1.0;
-
-                for (int i = 0; i < MAX_STEPS; i++) {
-                  if (float(i) >= localSteps) {
-                    break;
-                  }
-
-                  float t = tNear + jitter + (float(i) + 0.5) * dt;
-                  vec3 p = ro + rd * t;
-                  float r = length(p);
-                  vec3 n = p / max(r, 1e-5);
-
-                  float pole = pow(abs(n.z), 3.7);
-                  float equa = pow(max(0.0, 1.0 - abs(n.z)), 2.05);
-
-                  float rhoP = exp(-pow((r - Rp) / thickP, 2.0)) * pole;
-                  float rhoE = exp(-pow((r - Re) / thickE, 2.0)) * equa;
-
-                  float rsThickness = mix(0.18, 0.45, evo);
-                  float rhoRS = exp(-pow((r - Rrs) / rsThickness, 2.0)) * mix(0.75 * equa, 0.65 * pole, 0.4);
-
-                  float rhoRT = 0.0;
-                  float rhoJet = 0.0;
-                  float coarseShell = rhoP + rhoE + rhoRS;
-                  if (coarseShell > 0.004 || abs(n.z) > 0.78) {
-                    float rtLayer = exp(-pow((r - mix(Re, Rp, 0.52)) / (thickE * 1.1 + 0.08), 2.0));
-                    float rtGrowth = pow(evo, 1.55) * uRTStrength;
-                    vec3 warpP = p * 0.85 + vec3(0.0, 0.0, uTime * 0.23);
-                    float warp = fbm(warpP * 0.95, localOctaves);
-                    float fingers = smoothstep(0.50, 0.89, fbm(warpP * 2.15 + warp * 2.3 * n, localOctaves));
-                    float phi = atan(n.y, n.x);
-                    float branch = 0.5 + 0.5 * sin(phi * 13.0 + uTime * 0.74 + warp * 5.3);
-                    rhoRT = rtLayer * fingers * (0.35 + 1.75 * branch) * rtGrowth;
-
-                    float angle = radians(max(4.0, uJetAngle));
-                    float axisR = length(p.xy);
-                    float coneR = abs(p.z) * tan(angle) + 0.08;
-                    float jetCore = exp(-pow(axisR / (coneR * 0.58), 2.0));
-                    float along = smoothstep(0.25, 2.5, abs(p.z));
-                    float jetNoise = 0.54 + 0.46 * fbm(vec3(axisR * 3.7, p.z * 1.2, uTime * 0.9), localOctaves);
-                    rhoJet = jetCore * along * jetNoise * uJetIntensity * (1.0 - smoothstep(Rp * 1.36, Rp * 1.92, r));
-                  }
-
-                  float rhoAmbient = exp(-pow((r - Rp * 1.16) / (thickP * 0.9 + 0.18), 2.0)) * 0.22;
-
-                  float eqEmergence = smoothstep(0.20, 0.95, evo);
-                  float polarFade = 1.0 - smoothstep(0.28, 0.98, evo);
-
-                  float boundaryP = exp(-pow((r - Rp) / (thickP * 0.55 + 1e-3), 2.0));
-                  float boundaryE = exp(-pow((r - Re) / (thickE * 0.55 + 1e-3), 2.0));
-                  float shockBoost = 1.0 + 1.4 * (boundaryP * boundaryE + 0.45 * boundaryP);
-
-                  vec3 emiss = vec3(0.0);
-                  emiss += rhoP * (1.65 * polarFade + 0.45) * colPolar;
-                  emiss += rhoE * (0.45 + 1.15 * eqEmergence) * colEq;
-                  emiss += rhoRS * 1.95 * colRS;
-                  emiss += rhoRT * 1.20 * colRT;
-                  emiss += rhoJet * 2.10 * colorJet;
-                  emiss += rhoAmbient * 0.55 * vec3(0.92, 0.64, 0.86);
-                  emiss *= heatNorm * shockBoost;
-
-                  float corePulse = 0.68 + 0.32 * sin(uTime * 9.0);
-                  float coreGlow = exp(-pow(r / 0.36, 2.0)) * (0.95 + 0.8 * corePulse) * uRemnantLum;
-                  emiss += coreGlow * vec3(2.0, 1.7, 2.4);
-
-                  if (uAct < 2.5) {
-                    float blastR = 1.5 + 8.0 * uAct2Progress;
-                    float blast = exp(-pow((r - blastR) / (0.22 + 0.35 * uAct2Progress), 2.0));
-                    emiss += blast * uCollisionFlash * vec3(4.3, 3.3, 2.6);
-                    emiss += exp(-pow(r / 1.2, 2.0)) * uCollisionFlash * vec3(6.0, 5.4, 7.2);
-                  }
-
-                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.25 + rhoAmbient * 0.4);
-                  sigma *= opacityScale * densityScale * 0.34;
-
-                  float alpha = 1.0 - exp(-sigma * dt);
-                  vec3 contrib = emiss * alpha;
-                  accum += trans * contrib;
-                  trans *= (1.0 - alpha);
-
-                  if (trans < 0.01) {
-                    break;
-                  }
-                }
-              }
-            }
-
-            vec3 outColor = sceneColor + accum;
+            vec3 volumeColor = sampleVolume(vUv);
+            vec3 outColor = sceneColor + volumeColor;
             outColor += starAura(vUv, uStarScreen1, uStarVis1);
             outColor += starAura(vUv, uStarScreen2, uStarVis2);
+
             float luminance = dot(outColor, vec3(0.2126, 0.7152, 0.0722));
-            float bloomMask = smoothstep(0.55, 1.8, luminance);
-            vec3 bloomColor = blurBase * bloomMask * (0.9 * uBloomStrength);
-            outColor += bloomColor + accum * (0.12 * uBloomStrength);
+            float bloomMask = smoothstep(0.50, 1.7, luminance);
+            vec3 bloomColor = (blurBase + volumeColor * 0.35) * bloomMask * (0.9 * uBloomStrength);
+            outColor += bloomColor + volumeColor * (0.20 * uBloomStrength);
+
             gl_FragColor = vec4(max(outColor, vec3(0.0)), 1.0);
           }
         `,
       };
 
-      const postMaterial = new THREE.ShaderMaterial({
-        uniforms: postShader.uniforms,
-        vertexShader: postShader.vertexShader,
-        fragmentShader: postShader.fragmentShader,
+      const volumeMaterial = new THREE.ShaderMaterial({
+        uniforms: volumeShader.uniforms,
+        vertexShader: volumeShader.vertexShader,
+        fragmentShader: volumeShader.fragmentShader,
         depthTest: false,
         depthWrite: false,
       });
-      const postQuad = new THREE.Mesh(postGeometry, postMaterial);
-      postScene.add(postQuad);
+      const temporalMaterial = new THREE.ShaderMaterial({
+        uniforms: temporalShader.uniforms,
+        vertexShader: temporalShader.vertexShader,
+        fragmentShader: temporalShader.fragmentShader,
+        depthTest: false,
+        depthWrite: false,
+      });
+      const compositeMaterial = new THREE.ShaderMaterial({
+        uniforms: compositeShader.uniforms,
+        vertexShader: compositeShader.vertexShader,
+        fragmentShader: compositeShader.fragmentShader,
+        depthTest: false,
+        depthWrite: false,
+      });
+
+      const volumeScene = new THREE.Scene();
+      const temporalScene = new THREE.Scene();
+      const compositeScene = new THREE.Scene();
+      volumeScene.add(new THREE.Mesh(postGeometry, volumeMaterial));
+      temporalScene.add(new THREE.Mesh(postGeometry, temporalMaterial));
+      compositeScene.add(new THREE.Mesh(postGeometry, compositeMaterial));
 
       const starVertexShader = /* glsl */ `
         uniform vec3 uDeformDir;
@@ -1179,6 +1324,9 @@
         fpsSmooth: 60,
         adaptTimer: 0,
         currentQualityTier: 0,
+        cameraMotion: 0,
+        forceHistoryReset: true,
+        prevAct: 1,
       };
 
       const tmpDir12 = new THREE.Vector3();
@@ -1186,12 +1334,14 @@
       const tmpProj1 = new THREE.Vector3();
       const tmpProj2 = new THREE.Vector3();
       const origin = new THREE.Vector3(0, 0, 0);
+      const prevCamPos = camera.position.clone();
+      const prevCamQuat = camera.quaternion.clone();
 
       const qualityProfiles = [
-        { name: "Ultra", steps: 128, octaves: 5, pixelRatio: Math.min(window.devicePixelRatio, 2.0), bloomRadius: 0.30 },
-        { name: "High", steps: 112, octaves: 4, pixelRatio: Math.min(window.devicePixelRatio, 1.8), bloomRadius: 0.28 },
-        { name: "Medium", steps: 88, octaves: 3, pixelRatio: Math.min(window.devicePixelRatio, 1.4), bloomRadius: 0.26 },
-        { name: "Low", steps: 64, octaves: 2, pixelRatio: Math.min(window.devicePixelRatio, 1.1), bloomRadius: 0.24 },
+        { name: "Ultra", steps: 140, octaves: 5, pixelRatio: Math.min(window.devicePixelRatio, 2.0), volumeScale: volumeScaleByTier[0] },
+        { name: "High", steps: 118, octaves: 4, pixelRatio: Math.min(window.devicePixelRatio, 1.8), volumeScale: volumeScaleByTier[1] },
+        { name: "Medium", steps: 92, octaves: 3, pixelRatio: Math.min(window.devicePixelRatio, 1.4), volumeScale: volumeScaleByTier[2] },
+        { name: "Low", steps: 70, octaves: 2, pixelRatio: Math.min(window.devicePixelRatio, 1.1), volumeScale: volumeScaleByTier[3] },
       ];
 
       function smoothstep(edge0, edge1, x) {
@@ -1219,10 +1369,12 @@
         params.qualityTier = next;
         const profile = qualityProfiles[next];
         renderer.setPixelRatio(profile.pixelRatio);
+        currentVolumeScale = profile.volumeScale;
         onResize();
 
-        postMaterial.uniforms.uSteps.value = Number(profile.steps);
-        postMaterial.uniforms.uNoiseOctaves.value = Number(profile.octaves);
+        volumeMaterial.uniforms.uSteps.value = Number(profile.steps);
+        volumeMaterial.uniforms.uNoiseOctaves.value = Number(profile.octaves);
+        state.forceHistoryReset = true;
 
         const qEl = document.getElementById("qualityTier");
         qEl.value = String(next);
@@ -1290,6 +1442,7 @@
 
       timelineEl.addEventListener("input", () => {
         state.simTime = (parseFloat(timelineEl.value) / 1000) * TOTAL_DURATION;
+        state.forceHistoryReset = true;
       });
 
       const playPauseBtn = document.getElementById("playPause");
@@ -1303,6 +1456,7 @@
       restartBtn.addEventListener("click", () => {
         state.simTime = 0;
         state.playing = true;
+        state.forceHistoryReset = true;
         playPauseBtn.textContent = "Pause";
       });
 
@@ -1509,6 +1663,11 @@
           state.actTime = state.simTime - ACT1_DURATION - ACT2_DURATION;
           state.act2Progress = 1.0;
         }
+
+        if (state.act !== state.prevAct) {
+          state.forceHistoryReset = true;
+          state.prevAct = state.act;
+        }
       }
 
       function updatePerformance(delta) {
@@ -1550,66 +1709,93 @@
         const flash = state.act === 2 ? Math.exp(-state.act2Progress * 7.5) * (2.2 * massScale) : 0.0;
         renderer.toneMappingExposure = 1.0 + flash * 0.45;
 
-        postMaterial.uniforms.uCamPos.value.copy(camera.position);
-        postMaterial.uniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
-        postMaterial.uniforms.uInvView.value.copy(camera.matrixWorld);
-        postMaterial.uniforms.uTime.value = elapsed;
-        postMaterial.uniforms.uAct.value = state.act;
-        postMaterial.uniforms.uAct2Progress.value = state.act2Progress;
-        postMaterial.uniforms.uAct3Progress.value = state.act3Progress;
-        postMaterial.uniforms.uDays.value = state.physicalDays;
-        postMaterial.uniforms.uCollisionFlash.value = flash;
-        postMaterial.uniforms.uEnergyScale.value = massScale;
-        postMaterial.uniforms.uEjectaMass.value = params.ejectaMass;
-        postMaterial.uniforms.uPolarVel.value = params.polarVel;
-        postMaterial.uniforms.uEqVel.value = params.eqVel;
-        postMaterial.uniforms.uOpacityContrast.value = params.opacityContrast;
-        postMaterial.uniforms.uRTStrength.value = params.rtStrength;
-        postMaterial.uniforms.uJetAngle.value = params.jetAngle;
-        postMaterial.uniforms.uJetIntensity.value = params.jetIntensity;
-        postMaterial.uniforms.uRemnantLum.value = state.act === 2 ? params.remnantLum * state.remnantFade : 0.0;
-        postMaterial.uniforms.uBloomStrength.value = params.bloomStrength;
-        postMaterial.uniforms.uChromAb.value = params.chromaticAberration;
-        postMaterial.uniforms.uSharpen.value = params.sharpen;
+        const volUniforms = volumeMaterial.uniforms;
+        const compUniforms = compositeMaterial.uniforms;
+        const tempUniforms = temporalMaterial.uniforms;
+
+        volUniforms.uCamPos.value.copy(camera.position);
+        volUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
+        volUniforms.uInvView.value.copy(camera.matrixWorld);
+        volUniforms.uTime.value = elapsed;
+        volUniforms.uAct.value = state.act;
+        volUniforms.uAct2Progress.value = state.act2Progress;
+        volUniforms.uAct3Progress.value = state.act3Progress;
+        volUniforms.uDays.value = state.physicalDays;
+        volUniforms.uCollisionFlash.value = flash;
+        volUniforms.uEnergyScale.value = massScale;
+        volUniforms.uEjectaMass.value = params.ejectaMass;
+        volUniforms.uPolarVel.value = params.polarVel;
+        volUniforms.uEqVel.value = params.eqVel;
+        volUniforms.uOpacityContrast.value = params.opacityContrast;
+        volUniforms.uRTStrength.value = params.rtStrength;
+        volUniforms.uJetAngle.value = params.jetAngle;
+        volUniforms.uJetIntensity.value = params.jetIntensity;
+        volUniforms.uRemnantLum.value = state.act === 2 ? params.remnantLum * state.remnantFade : 0.0;
+
+        compUniforms.uBloomStrength.value = params.bloomStrength;
+        compUniforms.uChromAb.value = params.chromaticAberration;
+        compUniforms.uSharpen.value = params.sharpen;
+
         let stepScale = 1.0;
         let noiseScale = 1.0;
         if (state.act === 2) {
-          stepScale = 0.42 + 0.33 * state.act2Progress;
-          noiseScale = 0.60 + 0.20 * state.act2Progress;
+          stepScale = 1.08 - 0.10 * state.act2Progress;
+          noiseScale = 0.94 + 0.12 * state.act2Progress;
         } else if (state.act === 3) {
-          const ramp = smoothstep(0.0, 0.32, state.act3Progress);
-          stepScale = 0.75 + 0.25 * ramp;
-          noiseScale = 0.80 + 0.20 * ramp;
+          const earlyImpulse = Math.exp(-state.act3Progress * 5.8);
+          const lateRelax = smoothstep(0.18, 1.0, state.act3Progress);
+          stepScale = clamp(1.06 + 0.34 * earlyImpulse - 0.24 * lateRelax, 0.68, 1.36);
+          noiseScale = clamp(0.98 + 0.20 * earlyImpulse - 0.08 * lateRelax, 0.74, 1.28);
         }
-        postMaterial.uniforms.uStepScale.value = stepScale;
-        postMaterial.uniforms.uNoiseScale.value = noiseScale;
+        volUniforms.uStepScale.value = stepScale;
+        volUniforms.uNoiseScale.value = noiseScale;
 
         let starVis1 = 0.0;
         let starVis2 = 0.0;
         if (star1.visible) {
           tmpProj1.copy(star1.position).project(camera);
           if (tmpProj1.z > -1.0 && tmpProj1.z < 1.0) {
-            postMaterial.uniforms.uStarScreen1.value.set(tmpProj1.x * 0.5 + 0.5, tmpProj1.y * 0.5 + 0.5);
+            compUniforms.uStarScreen1.value.set(tmpProj1.x * 0.5 + 0.5, tmpProj1.y * 0.5 + 0.5);
             starVis1 = 1.0;
           } else {
-            postMaterial.uniforms.uStarScreen1.value.set(-10, -10);
+            compUniforms.uStarScreen1.value.set(-10, -10);
           }
         } else {
-          postMaterial.uniforms.uStarScreen1.value.set(-10, -10);
+          compUniforms.uStarScreen1.value.set(-10, -10);
         }
         if (star2.visible) {
           tmpProj2.copy(star2.position).project(camera);
           if (tmpProj2.z > -1.0 && tmpProj2.z < 1.0) {
-            postMaterial.uniforms.uStarScreen2.value.set(tmpProj2.x * 0.5 + 0.5, tmpProj2.y * 0.5 + 0.5);
+            compUniforms.uStarScreen2.value.set(tmpProj2.x * 0.5 + 0.5, tmpProj2.y * 0.5 + 0.5);
             starVis2 = 1.0;
           } else {
-            postMaterial.uniforms.uStarScreen2.value.set(-10, -10);
+            compUniforms.uStarScreen2.value.set(-10, -10);
           }
         } else {
-          postMaterial.uniforms.uStarScreen2.value.set(-10, -10);
+          compUniforms.uStarScreen2.value.set(-10, -10);
         }
-        postMaterial.uniforms.uStarVis1.value = starVis1;
-        postMaterial.uniforms.uStarVis2.value = starVis2;
+        compUniforms.uStarVis1.value = starVis1;
+        compUniforms.uStarVis2.value = starVis2;
+
+        let historyBlend = 0.0;
+        let historyReset = 1.0;
+        if (state.act >= 2) {
+          const motionSuppression = clamp(1.0 - state.cameraMotion * 18.0, 0.0, 1.0);
+          const phaseBlend =
+            state.act === 2 ? 0.52 + 0.18 * state.act2Progress : 0.62 + 0.24 * smoothstep(0.0, 0.55, state.act3Progress);
+          historyBlend = phaseBlend * motionSuppression;
+          historyReset = 0.0;
+        }
+        if (state.forceHistoryReset) {
+          historyBlend = 0.0;
+          historyReset = 1.0;
+          state.forceHistoryReset = false;
+        }
+        tempUniforms.uHistoryBlend.value = historyBlend;
+        tempUniforms.uHistoryReset.value = historyReset;
+        tempUniforms.tCurrent.value = volumeCurrentTarget.texture;
+        tempUniforms.tHistory.value = volumeHistoryRead.texture;
+        compUniforms.tVolume.value = volumeHistoryRead.texture;
 
         hudAct.textContent = `Current Act: Act ${state.act} - ${actLabel}`;
         hudSim.textContent = `Simulation Time: t = ${state.simTime.toFixed(1)}s / ${TOTAL_DURATION.toFixed(1)}s`;
@@ -1622,7 +1808,7 @@
         }
         hudFPS.textContent = `FPS (smoothed): ${state.fpsSmooth.toFixed(1)}`;
         hudQuality.textContent = `Render Quality Tier: ${qualityProfile.name}`;
-        const effectiveSteps = Math.round(postMaterial.uniforms.uSteps.value * postMaterial.uniforms.uStepScale.value);
+        const effectiveSteps = Math.round(volUniforms.uSteps.value * volUniforms.uStepScale.value);
         hudSteps.textContent = `Ray March Steps: ${effectiveSteps}`;
       }
 
@@ -1633,7 +1819,16 @@
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
         baseTarget.setSize(w, h);
-        postMaterial.uniforms.uResolution.value.set(w, h);
+
+        const volSize = getVolumeDimensions(w, h);
+        volumeCurrentTarget.setSize(volSize.w, volSize.h);
+        volumeHistoryTargetA.setSize(volSize.w, volSize.h);
+        volumeHistoryTargetB.setSize(volSize.w, volSize.h);
+
+        volumeMaterial.uniforms.uResolution.value.set(volSize.w, volSize.h);
+        compositeMaterial.uniforms.uResolution.value.set(w, h);
+        compositeMaterial.uniforms.uVolumeResolution.value.set(volSize.w, volSize.h);
+        state.forceHistoryReset = true;
       }
 
       window.addEventListener("resize", onResize);
@@ -1659,6 +1854,12 @@
         }
 
         controls.update();
+        const camPosDelta = camera.position.distanceTo(prevCamPos);
+        const camQuatDot = clamp(Math.abs(camera.quaternion.dot(prevCamQuat)), 0.0, 1.0);
+        const camAngDelta = 2.0 * Math.acos(camQuatDot);
+        state.cameraMotion = camPosDelta + camAngDelta * 3.5;
+        prevCamPos.copy(camera.position);
+        prevCamQuat.copy(camera.quaternion);
 
         const elapsed = clock.getElapsedTime();
         updateAct(elapsed);
@@ -1666,9 +1867,22 @@
         renderer.setRenderTarget(baseTarget);
         renderer.clear();
         renderer.render(scene, camera);
+
+        renderer.setRenderTarget(volumeCurrentTarget);
+        renderer.clear();
+        renderer.render(volumeScene, postCamera);
+
+        temporalMaterial.uniforms.tCurrent.value = volumeCurrentTarget.texture;
+        temporalMaterial.uniforms.tHistory.value = volumeHistoryRead.texture;
+        renderer.setRenderTarget(volumeHistoryWrite);
+        renderer.clear();
+        renderer.render(temporalScene, postCamera);
+        swapVolumeHistoryTargets();
+        compositeMaterial.uniforms.tVolume.value = volumeHistoryRead.texture;
+
         renderer.setRenderTarget(null);
         renderer.clear();
-        renderer.render(postScene, postCamera);
+        renderer.render(compositeScene, postCamera);
       }
 
       animate();
