@@ -815,7 +815,15 @@
                 float Re = mix(0.95, 9.1 * uEnergyScale * veScale, pow(evo, 0.88));
                 float thickP = mix(0.32, 1.05, evo);
                 float thickE = mix(0.42, 1.42, evo);
-                float Rrs = mix(Re, Rp, 0.62);
+                float sedovBlend = smoothstep(0.22, 1.0, evo);
+                float shockEvo = mix(pow(max(evo, 1e-4), 0.90), pow(max(evo, 1e-4), 0.46), sedovBlend);
+                float Rfs = mix(1.15, 14.4 * uEnergyScale * mix(vpScale, veScale, 0.34) + 2.1, shockEvo);
+                float Rcd = mix(1.0, 12.1 * uEnergyScale * mix(vpScale, veScale, 0.42) + 1.6, mix(shockEvo, pow(max(evo, 1e-4), 0.56), 0.65));
+                float Rrs = mix(0.92, Rcd * (0.78 + 0.10 * (1.0 - mNorm)) + 0.22, mix(shockEvo, pow(max(evo, 1e-4), 0.62), 0.70));
+                float fsThickness = mix(0.18, 0.72, evo);
+                float cdThickness = mix(0.16, 0.56, evo);
+                float rsThickness = mix(0.16, 0.52, evo);
+                float shockCorrAmp = (0.03 + 0.26 * pow(evo, 1.4)) * (0.65 + 0.35 * uRTStrength);
 
                 float tDays = max(uDays, 0.03);
                 float maxLtDelay = min(1.85, totalDist * 0.034);
@@ -905,6 +913,8 @@
                   float r = length(p);
                   vec3 n = p / max(r, 1e-5);
                   float ltMix = clamp((t - tNear) / totalDist, 0.0, 1.0);
+                  float act2Local = clamp(uAct2Progress - ltMix * 0.18, 0.0, 1.0);
+                  float evoLocal = clamp(evo - ltMix * (0.06 + 0.08 * evo), 0.0, 1.0);
                   float tDaysLocal = mix(tDays, tDaysFar, ltMix);
                   float heatNormLocal = mix(heatNormNear, heatNormFar, ltMix);
                   float thermLocal = mix(thermNear, thermFar, ltMix);
@@ -932,13 +942,21 @@
                   float rhoP = exp(-pow((r - Rp) / thickP, 2.0)) * pole;
                   float rhoE = exp(-pow((r - Re) / thickE, 2.0)) * equa;
 
-                  float rsThickness = mix(0.18, 0.45, evo);
-                  float rhoRS = exp(-pow((r - Rrs) / rsThickness, 2.0)) * mix(0.75 * equa, 0.65 * pole, 0.4);
+                  float phiN = atan(n.y, n.x);
+                  float corrSeed = noise3(n * (6.0 + 3.0 * evo) + vec3(0.0, 0.0, uTime * 0.12));
+                  float corrWave = 0.5 + 0.5 * sin((phiN + n.z * 2.1) * (7.0 + 3.0 * evo) + uTime * (0.85 + 0.45 * evo) + corrSeed * 6.2);
+                  float shockCorr = (corrWave - 0.5) * 2.0 * shockCorrAmp;
+                  float RfsLocal = Rfs * (1.0 + shockCorr);
+                  float RcdLocal = Rcd * (1.0 + 0.75 * shockCorr);
+                  float RrsLocal = Rrs * (1.0 + 0.55 * shockCorr);
+
+                  float rhoForward = exp(-pow((r - RfsLocal) / max(fsThickness, 1e-3), 2.0)) * mix(pow(abs(n.z), 1.05), 1.0, 0.48);
+                  float rhoContact = exp(-pow((r - RcdLocal) / max(cdThickness, 1e-3), 2.0)) * mix(0.82 * equa + 0.35 * pole, 0.55 + 0.45 * equa, 0.45);
+                  float rhoRS = exp(-pow((r - RrsLocal) / max(rsThickness, 1e-3), 2.0)) * mix(0.78 * equa, 0.55 * pole, 0.32);
 
                   float rhoRT = 0.0;
                   float rhoJet = 0.0;
                   float rhoCocoon = 0.0;
-                  float rhoForward = 0.0;
                   float rhoInnerCloud = 0.0;
                   float rhoNestedShell = 0.0;
                   float rhoShockCloud = 0.0;
@@ -962,7 +980,7 @@
                   float nebulaW = 0.55 + 0.95 * nebulaPhaseLocal;
                   float rhoNebulaBase = exp(-pow((r - nebulaR) / nebulaW, 2.0)) * (0.12 + 0.88 * phaseNebulaLocal);
 
-                  float coarseShell = rhoP + rhoE + rhoRS + 0.35 * rhoInnerBase + 0.70 * rhoShockCloudBase + 0.55 * rhoNestedBroad + 0.65 * rhoNebulaBase;
+                  float coarseShell = rhoP + rhoE + rhoRS + 0.62 * rhoForward + 0.52 * rhoContact + 0.35 * rhoInnerBase + 0.70 * rhoShockCloudBase + 0.55 * rhoNestedBroad + 0.65 * rhoNebulaBase;
                   float stepMul = 1.0;
                   if (coarseShell < 0.0018) {
                     stepMul = 1.58;
@@ -1067,10 +1085,18 @@
                     rhoNebula = rhoNebulaBase * (0.20 + 2.20 * nebMask * puffBand);
                   }
 
-                  float forwardR = Rp * (1.08 + 0.46 * smoothstep(0.02, 1.0, evo));
-                  float forwardShell = exp(-pow((r - forwardR) / (0.24 + 0.42 * evo), 2.0));
-                  float forwardAniso = mix(pow(abs(n.z), 1.30), 1.0, 0.38);
-                  rhoForward = forwardShell * forwardAniso * smoothstep(0.04, 0.98, evo) * (0.85 + 0.55 * collisionCore);
+                  float fsWidthLocal = fsThickness * (0.82 + 0.35 * sedovBlend);
+                  float cdWidthLocal = cdThickness * (0.95 + 0.22 * sedovBlend);
+                  float rsWidthLocal = rsThickness * (0.88 + 0.28 * sedovBlend);
+                  float forwardShell = exp(-pow((r - RfsLocal) / max(fsWidthLocal, 1e-3), 2.0));
+                  float contactShell = exp(-pow((r - RcdLocal) / max(cdWidthLocal, 1e-3), 2.0));
+                  float reverseShell = exp(-pow((r - RrsLocal) / max(rsWidthLocal, 1e-3), 2.0));
+                  float forwardAniso = mix(pow(abs(n.z), 1.20), 1.0, 0.44);
+                  float reverseAniso = mix(0.74 * equa + 0.30 * pole, 0.66 * equa, 0.35);
+                  float contactAniso = mix(0.62 + 0.38 * equa, 0.62 + 0.38 * pole, 0.28);
+                  rhoForward = max(rhoForward, forwardShell * forwardAniso * smoothstep(0.04, 0.98, evoLocal) * (0.88 + 0.52 * collisionCore));
+                  rhoContact = max(rhoContact, contactShell * contactAniso * smoothstep(0.06, 1.0, evoLocal) * (0.75 + 0.44 * collisionCore));
+                  rhoRS = max(rhoRS, reverseShell * reverseAniso * smoothstep(0.05, 1.0, evoLocal) * (0.84 + 0.46 * collisionCore));
 
                   float axisRag = length(p.xy);
                   float azag = abs(p.z);
@@ -1104,7 +1130,7 @@
 
                   float boundaryP = exp(-pow((r - Rp) / (thickP * 0.55 + 1e-3), 2.0));
                   float boundaryE = exp(-pow((r - Re) / (thickE * 0.55 + 1e-3), 2.0));
-                  float shockBoost = 1.0 + 1.4 * (boundaryP * boundaryE + 0.45 * boundaryP);
+                  float shockBoost = 1.0 + 1.05 * (boundaryP * boundaryE + 0.42 * boundaryP) + 0.42 * (rhoForward + rhoContact + rhoRS);
                   float transLum = dot(transRGB, vec3(0.2126, 0.7152, 0.0722));
                   vec3 tauRGB = -log(max(transRGB, vec3(1e-4)));
                   float tauApprox = dot(tauRGB, vec3(0.30, 0.45, 0.25));
@@ -1113,9 +1139,22 @@
                   vec3 colPhotoTransfer = colPhotoLocal * mix(vec3(1.0), lanthTransfer, 0.25);
                   float gradP = abs(r - Rp) * rhoP / max(thickP * thickP, 1e-4);
                   float gradE = abs(r - Re) * rhoE / max(thickE * thickE, 1e-4);
-                  float gradRS = abs(r - Rrs) * rhoRS / max(rsThickness * rsThickness, 1e-4);
-                  float shockRim = smoothstep(0.18, 1.20, gradP + gradE + 1.4 * gradRS);
+                  float gradFS = abs(r - RfsLocal) * rhoForward / max(fsThickness * fsThickness, 1e-4);
+                  float gradCD = abs(r - RcdLocal) * rhoContact / max(cdThickness * cdThickness, 1e-4);
+                  float gradRS = abs(r - RrsLocal) * rhoRS / max(rsThickness * rsThickness, 1e-4);
+                  float shockRim = smoothstep(0.16, 1.26, gradP + gradE + 1.6 * gradFS + 1.3 * gradCD + 1.5 * gradRS);
                   vec3 colShockRim = mix(colRSLocal, vec3(1.08, 0.98, 1.22), 0.38 + 0.22 * phaseBlueLocal);
+                  float vShockNorm = clamp(mix(1.28, 0.56, sedovBlend) * mix(vpScale, veScale, 0.45), 0.35, 1.55);
+                  float shockTNorm = clamp(vShockNorm * vShockNorm * (1.0 + 0.35 * collisionCore), 0.20, 2.30);
+                  float shockHeat = sqrt(shockTNorm) * (0.78 + 0.22 * phaseBlueLocal);
+                  float compFS = pow(max(rhoForward, 0.0), 1.65);
+                  float compRS = pow(max(rhoRS, 0.0), 1.60);
+                  float compCD = pow(max(rhoContact, 0.0), 1.75);
+                  float eqTau = uOpacityContrast * pow(max(0.0, 1.0 - abs(n.z)), 1.55) * (0.55 + 0.45 * phaseRedLocal);
+                  float shockAtten = exp(-0.42 * eqTau);
+                  vec3 colShockFS = mix(kelvinToRGB(15000.0 * vShockNorm), vec3(0.70, 0.90, 1.34), 0.35);
+                  vec3 colShockRS = mix(colRSLocal, vec3(1.0, 0.72, 0.92), 0.35);
+                  vec3 colShockCD = mix(vec3(0.92, 0.78, 1.26), vec3(1.0, 0.58, 0.35), smoothstep(0.25, 1.0, evoLocal));
 
                   vec3 emiss = vec3(0.0);
                   emiss += rhoP * (1.65 * polarFade + 0.45) * colPolarLocal;
@@ -1129,10 +1168,14 @@
                   emiss += rhoNestedShell * (0.95 + 0.40 * collisionCore) * colNestedTransfer;
                   emiss += rhoNebula * (1.05 + 0.55 * phaseBlueLocal) * colNebTransfer;
                   emiss += rhoForward * vec3(0.66, 0.86, 1.25);
+                  emiss += rhoContact * mix(vec3(0.90, 0.78, 1.18), vec3(0.98, 0.62, 0.42), smoothstep(0.35, 1.0, evoLocal)) * (0.78 + 0.32 * collisionCore);
                   emiss += rhoAfterglow * (0.88 + 0.32 * phaseBlueLocal) * colAfterglowLocal;
                   emiss += rhoPhoto * photoBand * (1.15 + 0.25 * phaseBlueLocal) * colPhotoTransfer;
                   emiss += rhoAmbient * 0.55 * vec3(0.92, 0.64, 0.86);
                   emiss += shockRim * (0.72 + 0.52 * collisionCore) * colShockRim;
+                  emiss += compFS * 0.82 * shockHeat * colShockFS * shockAtten;
+                  emiss += compRS * 0.74 * shockHeat * colShockRS * shockAtten;
+                  emiss += compCD * 0.66 * shockHeat * colShockCD * mix(shockAtten, 1.0, 0.35);
                   float domainFade = 1.0 - smoothstep(boundRadius * 0.84, boundRadius * 1.06, r);
                   emiss *= domainFade;
                   emiss *= heatNormLocal * thermLocal * shockBoost;
@@ -1145,29 +1188,36 @@
 
                   float blastHalo = 0.0;
                   if (uAct < 2.5) {
-                    float blastR = 1.5 + 8.0 * uAct2Progress;
-                    float blast = exp(-pow((r - blastR) / (0.22 + 0.35 * uAct2Progress), 2.0));
+                    float blastR = 1.45 + 8.2 * act2Local;
+                    float blastR2 = blastR * (1.18 + 0.12 * act2Local);
+                    float blastW = 0.20 + 0.34 * act2Local;
+                    float blast = exp(-pow((r - blastR) / blastW, 2.0));
+                    float blast2 = exp(-pow((r - blastR2) / (blastW * 1.42), 2.0)) * smoothstep(0.18, 1.0, act2Local);
                     float flashAniso = mix(0.50, 1.0, pow(abs(n.z), 1.6));
-                    blastHalo = blast * uCollisionFlash * flashAniso * promptVisibility;
+                    blastHalo = (blast + 0.38 * blast2) * uCollisionFlash * flashAniso * promptVisibility;
                     emiss += blastHalo * vec3(4.2, 3.4, 3.2);
                     emiss += exp(-pow(r / 1.15, 2.0)) * uCollisionFlash * (0.45 + 0.55 * promptVisibility) * vec3(5.9, 5.3, 6.9);
                   } else {
-                    float earlyShock = exp(-evo * 7.0);
-                    float blastR3 = mix(2.1, Rp * 0.95, smoothstep(0.0, 0.30, evo));
-                    blastHalo = exp(-pow((r - blastR3) / (0.28 + 0.46 * evo), 2.0)) * earlyShock * (0.75 + 0.5 * uEnergyScale) * (0.55 + 0.45 * promptVisibility);
+                    float earlyShock = exp(-evoLocal * 6.2);
+                    float blastR3 = mix(2.0, Rp * 0.95, smoothstep(0.0, 0.32, evoLocal));
+                    float blastR4 = blastR3 * (1.26 + 0.16 * smoothstep(0.0, 0.65, evoLocal));
+                    float blastW3 = 0.24 + 0.40 * evoLocal;
+                    float shell3 = exp(-pow((r - blastR3) / blastW3, 2.0));
+                    float shell4 = exp(-pow((r - blastR4) / (blastW3 * 1.55), 2.0)) * smoothstep(0.08, 0.85, evoLocal);
+                    blastHalo = (shell3 + 0.42 * shell4) * earlyShock * (0.75 + 0.5 * uEnergyScale) * (0.55 + 0.45 * promptVisibility);
                     emiss += blastHalo * vec3(1.4, 1.1, 1.7);
                   }
 
-                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.33 + rhoCocoon * 0.52 + rhoInnerCloud * 0.42 + rhoShockCloud * 0.52 + rhoNestedShell * 0.48 + rhoNebula * 0.56 + rhoAfterglow * 0.34 + rhoPhoto * 0.46 + rhoForward * 0.28 + rhoAmbient * 0.4 + blastHalo * 0.3);
+                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.33 + rhoCocoon * 0.52 + rhoInnerCloud * 0.42 + rhoShockCloud * 0.52 + rhoNestedShell * 0.48 + rhoNebula * 0.56 + rhoAfterglow * 0.34 + rhoPhoto * 0.46 + rhoForward * 0.34 + rhoContact * 0.40 + rhoAmbient * 0.4 + blastHalo * 0.3);
                   sigma *= opacityScale * densityScale * 0.34;
 
                   float dtEff = dt * stepMul;
-                  if (sigma < 0.0015 && coarseShell < 0.0024 && (rhoJet + rhoCocoon + rhoInnerCloud + rhoShockCloud + rhoNestedShell + rhoNebula + rhoAfterglow + rhoPhoto) < 0.0018) {
+                  if (sigma < 0.0015 && coarseShell < 0.0024 && (rhoJet + rhoCocoon + rhoInnerCloud + rhoShockCloud + rhoNestedShell + rhoNebula + rhoAfterglow + rhoPhoto + rhoForward + rhoContact) < 0.0018) {
                     t += dtEff;
                     continue;
                   }
 
-                  float selfTau = (rhoE * 1.30 * uOpacityContrast + rhoNestedShell * 0.78 + rhoNebula * 0.68 + rhoCocoon * 0.52 + rhoP * 0.62 + rhoShockCloud * 0.72) * max(boundRadius - r, 0.0) * 0.040;
+                  float selfTau = (rhoE * 1.30 * uOpacityContrast + rhoNestedShell * 0.78 + rhoNebula * 0.68 + rhoCocoon * 0.52 + rhoP * 0.62 + rhoShockCloud * 0.72 + rhoContact * 0.46) * max(boundRadius - r, 0.0) * 0.040;
                   float selfShadow = exp(-selfTau);
                   float frontShadow = mix(0.60, 1.0, pow(transLum, 0.30));
                   emiss *= mix(frontShadow, frontShadow * selfShadow, 0.58);
