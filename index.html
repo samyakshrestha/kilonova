@@ -922,13 +922,27 @@
         void main() {
           vec3 p = position;
           vec3 d = normalize(uDeformDir + vec3(1e-6));
-          float pull = dot(normalize(p), d);
-          p += d * pull * uDeform * 0.34;
-          p += normal * (0.018 * uDeform) * sin(uTime * 1.5 + position.y * 14.0 + position.x * 6.0);
+          float tidal = clamp(uDeform, 0.0, 1.0);
+
+          float par = dot(p, d);
+          vec3 pPar = d * par;
+          vec3 pPerp = p - pPar;
+
+          // Prolate deformation expected from tidal forces near contact.
+          float stretch = 1.0 + tidal * 0.82;
+          float squash = 1.0 - tidal * 0.26;
+          p = pPar * stretch + pPerp * squash;
+
+          // Slight Roche-like cusp toward the companion-facing hemisphere.
+          float face = smoothstep(-0.08, 1.0, par);
+          p += d * face * tidal * 0.12;
+
+          // Low-amplitude surface agitation for plasma-like granulation.
+          p += normal * (0.005 + 0.010 * tidal) * sin(uTime * 1.5 + position.y * 14.0 + position.x * 6.0);
 
           vec4 wp = modelMatrix * vec4(p, 1.0);
           vWorldPos = wp.xyz;
-          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          vWorldNormal = normalize(mat3(modelMatrix) * normalize(p));
           vLocalPos = normalize(p);
           gl_Position = projectionMatrix * viewMatrix * wp;
         }
@@ -1056,22 +1070,6 @@
       remnant.visible = false;
       scene.add(remnant);
 
-      const streamCount = 1100;
-      const streamPositions = new Float32Array(streamCount * 3);
-      const streamGeom = new THREE.BufferGeometry();
-      streamGeom.setAttribute("position", new THREE.BufferAttribute(streamPositions, 3));
-      const streamMat = new THREE.PointsMaterial({
-        color: new THREE.Color(1.0, 0.78, 0.55),
-        size: 0.08,
-        transparent: true,
-        opacity: 0.0,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const streamPoints = new THREE.Points(streamGeom, streamMat);
-      streamPoints.visible = false;
-      scene.add(streamPoints);
-
       const burstCount = 2600;
       const burstPositions = new Float32Array(burstCount * 3);
       const burstVel = new Float32Array(burstCount * 3);
@@ -1175,6 +1173,7 @@
         actTime: 0,
         act2Progress: 0,
         act3Progress: 0,
+        remnantFade: 0.0,
         physicalDays: 0.03,
         collisionElapsed: 0,
         fpsSmooth: 60,
@@ -1184,9 +1183,6 @@
 
       const tmpDir12 = new THREE.Vector3();
       const tmpDir21 = new THREE.Vector3();
-      const tmpStreamDir = new THREE.Vector3();
-      const tmpStreamSide = new THREE.Vector3();
-      const tmpStreamUp = new THREE.Vector3();
       const tmpProj1 = new THREE.Vector3();
       const tmpProj2 = new THREE.Vector3();
       const origin = new THREE.Vector3(0, 0, 0);
@@ -1392,43 +1388,6 @@
         burstGeom.attributes.position.needsUpdate = true;
       }
 
-      function updateStreams(progress, elapsed) {
-        const strength = smoothstep(0.63, 1.0, progress);
-        streamPoints.visible = strength > 0.02;
-        streamMat.opacity = 0.08 + strength * 0.5;
-        streamMat.size = 0.05 + strength * 0.18;
-
-        if (strength <= 0.02) {
-          return;
-        }
-
-        tmpStreamDir.subVectors(star2.position, star1.position).normalize();
-        tmpStreamSide.set(0, 0, 1).cross(tmpStreamDir).normalize();
-        tmpStreamUp.crossVectors(tmpStreamDir, tmpStreamSide).normalize();
-
-        const x1 = star1.position.x;
-        const y1 = star1.position.y;
-        const z1 = star1.position.z;
-        const dx = star2.position.x - x1;
-        const dy = star2.position.y - y1;
-        const dz = star2.position.z - z1;
-
-        for (let i = 0; i < streamCount; i++) {
-          const i3 = i * 3;
-          const t = i / (streamCount - 1);
-          const baseX = x1 + dx * t;
-          const baseY = y1 + dy * t;
-          const baseZ = z1 + dz * t;
-          const curl = Math.sin(t * 44.0 + elapsed * 9.0 + i * 0.013) * (0.07 + 0.33 * strength);
-          const wobble = Math.cos(t * 37.0 - elapsed * 7.0 + i * 0.02) * (0.05 + 0.24 * strength);
-          streamPositions[i3 + 0] = baseX + tmpStreamSide.x * curl + tmpStreamUp.x * wobble;
-          streamPositions[i3 + 1] = baseY + tmpStreamSide.y * curl + tmpStreamUp.y * wobble;
-          streamPositions[i3 + 2] = baseZ + tmpStreamSide.z * curl + tmpStreamUp.z * wobble;
-        }
-
-        streamGeom.attributes.position.needsUpdate = true;
-      }
-
       function updateInspiral(elapsed, actTime) {
         const p = clamp(actTime / ACT1_DURATION, 0, 1);
         const m1 = params.m1;
@@ -1450,7 +1409,7 @@
         star1.scale.setScalar(1);
         star2.scale.setScalar(1);
 
-        const tidal = Math.pow(smoothstep(0.60, 1.0, p), 1.35) * 0.58;
+        const tidal = clamp(Math.pow(smoothstep(0.50, 1.0, p), 1.05) * 0.92, 0.0, 0.98);
         tmpDir12.subVectors(star2.position, star1.position).normalize();
         tmpDir21.copy(tmpDir12).multiplyScalar(-1);
 
@@ -1473,8 +1432,7 @@
         star1.visible = true;
         star2.visible = true;
         remnant.visible = false;
-
-        updateStreams(p, elapsed);
+        state.remnantFade = 0.0;
 
         burstMat.opacity = 0.0;
         burstPoints.visible = false;
@@ -1493,12 +1451,13 @@
         star1.position.lerp(origin, 0.14 + p * 0.2);
         star2.position.lerp(origin, 0.14 + p * 0.2);
 
-        streamPoints.visible = false;
-
         remnant.visible = true;
         remnant.position.set(0, 0, 0);
         const pulse = 1.0 + 0.25 * Math.sin(elapsed * 14.0);
+        const remnantFade = 1.0 - 0.35 * p;
         remnant.scale.setScalar((0.85 + 0.55 * (1.0 - p)) * pulse);
+        remnant.material.opacity = 0.88 * remnantFade;
+        state.remnantFade = remnantFade;
 
         updateBurst(actTime, massScale);
       }
@@ -1508,12 +1467,10 @@
 
         star1.visible = false;
         star2.visible = false;
-        streamPoints.visible = false;
 
-        remnant.visible = true;
-        remnant.position.set(0, 0, 0);
-        remnant.scale.setScalar(0.78 + 0.12 * Math.sin(elapsed * 8.0));
-        remnant.material.opacity = 0.92;
+        remnant.visible = false;
+        remnant.material.opacity = 0.0;
+        state.remnantFade = 0.0;
 
         updateBurst(ACT2_DURATION + actTime, massScale);
 
@@ -1610,7 +1567,7 @@
         postMaterial.uniforms.uRTStrength.value = params.rtStrength;
         postMaterial.uniforms.uJetAngle.value = params.jetAngle;
         postMaterial.uniforms.uJetIntensity.value = params.jetIntensity;
-        postMaterial.uniforms.uRemnantLum.value = params.remnantLum;
+        postMaterial.uniforms.uRemnantLum.value = state.act === 2 ? params.remnantLum * state.remnantFade : 0.0;
         postMaterial.uniforms.uBloomStrength.value = params.bloomStrength;
         postMaterial.uniforms.uChromAb.value = params.chromaticAberration;
         postMaterial.uniforms.uSharpen.value = params.sharpen;
