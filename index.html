@@ -592,11 +592,15 @@
           uJetAngle: { value: 12.0 },
           uJetIntensity: { value: 1.2 },
           uRemnantLum: { value: 1.1 },
-          uSteps: { value: 96.0 },
-          uNoiseOctaves: { value: 4.0 },
+          uSteps: { value: 128.0 },
+          uNoiseOctaves: { value: 5.0 },
           uBloomStrength: { value: 1.25 },
-          uChromAb: { value: 0.20 },
-          uSharpen: { value: 0.25 },
+          uChromAb: { value: 0.08 },
+          uSharpen: { value: 0.65 },
+          uStarScreen1: { value: new THREE.Vector2(-10, -10) },
+          uStarScreen2: { value: new THREE.Vector2(-10, -10) },
+          uStarVis1: { value: 0.0 },
+          uStarVis2: { value: 0.0 },
         },
         vertexShader: /* glsl */ `
           varying vec2 vUv;
@@ -634,6 +638,10 @@
           uniform float uBloomStrength;
           uniform float uChromAb;
           uniform float uSharpen;
+          uniform vec2 uStarScreen1;
+          uniform vec2 uStarScreen2;
+          uniform float uStarVis1;
+          uniform float uStarVis2;
 
           #define MAX_STEPS 128
 
@@ -703,6 +711,17 @@
 
           vec3 sampleBase(vec2 uv) {
             return texture2D(tBase, clamp(uv, 0.0, 1.0)).rgb;
+          }
+
+          vec3 starAura(vec2 uv, vec2 center, float vis) {
+            vec2 d = uv - center;
+            float r2 = dot(d, d);
+            float core = exp(-r2 * 1250.0);
+            float halo = exp(-r2 * 220.0);
+            float outer = exp(-r2 * 60.0);
+            float streak = exp(-abs(d.y) * 240.0) * exp(-abs(d.x) * 8.0);
+            vec3 tint = vec3(0.72, 0.95, 1.55);
+            return vis * tint * (core * 0.95 + halo * 0.40 + outer * 0.12 + streak * 0.34);
           }
 
           void main() {
@@ -855,6 +874,8 @@
             }
 
             vec3 outColor = sceneColor + accum;
+            outColor += starAura(vUv, uStarScreen1, uStarVis1);
+            outColor += starAura(vUv, uStarScreen2, uStarVis2);
             float luminance = dot(outColor, vec3(0.2126, 0.7152, 0.0722));
             float bloomMask = smoothstep(0.55, 1.8, luminance);
             vec3 bloomColor = blurBase * bloomMask * (0.9 * uBloomStrength);
@@ -903,68 +924,68 @@
         uniform float uTemp;
         uniform float uIntensity;
         uniform vec3 uBaseColor;
+        uniform float uTime;
         varying vec3 vWorldPos;
         varying vec3 vWorldNormal;
         varying vec3 vLocalPos;
 
-        float pattern(vec3 p) {
-          float t0 = sin(p.x * 18.0 + p.y * 10.0);
-          float t1 = sin(p.z * 17.0 - p.y * 13.0);
-          float t2 = sin((p.x + p.z) * 22.0);
-          return (t0 + t1 + t2) * 0.1667 + 0.5;
+        float hash(vec2 p) {
+          p = fract(p * vec2(123.34, 456.21));
+          p += dot(p, p + 45.32);
+          return fract(p.x * p.y);
+        }
+
+        float noise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          float a = hash(i + vec2(0.0, 0.0));
+          float b = hash(i + vec2(1.0, 0.0));
+          float c = hash(i + vec2(0.0, 1.0));
+          float d = hash(i + vec2(1.0, 1.0));
+          return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+        }
+
+        float fbm(vec2 p) {
+          float sum = 0.0;
+          float amp = 0.5;
+          for (int i = 0; i < 5; i++) {
+            sum += amp * noise(p);
+            p = p * 2.03 + vec2(1.71, -0.83);
+            amp *= 0.5;
+          }
+          return sum;
         }
 
         void main() {
           vec3 N = normalize(vWorldNormal);
           vec3 V = normalize(uCamPos - vWorldPos);
-          vec3 L1 = normalize(vec3(0.36, 0.24, 0.90));
-          vec3 L2 = normalize(vec3(-0.28, -0.22, 0.93));
-          float nd1 = max(dot(N, L1), 0.0);
-          float nd2 = max(dot(N, L2), 0.0);
-          float fres = pow(1.0 - max(dot(N, V), 0.0), 3.2);
+          float mu = max(dot(N, V), 0.0);
+          float limb = 0.72 + 0.28 * pow(mu, 0.35);
+          float fres = pow(1.0 - mu, 2.9);
 
-          float surf = pattern(vLocalPos);
-          float hotspot = smoothstep(0.62, 1.0, pattern(vLocalPos.yzx * 1.2));
-          float granularity = 0.90 + 0.28 * surf + 0.22 * hotspot;
+          vec2 uv;
+          uv.x = atan(vLocalPos.z, vLocalPos.x) / 6.28318530718 + 0.5;
+          uv.y = asin(clamp(vLocalPos.y, -1.0, 1.0)) / 3.14159265359 + 0.5;
+          vec2 drift = vec2(uTime * 0.014, -uTime * 0.009);
+          float gran1 = fbm(uv * 180.0 + drift * 8.0);
+          float gran2 = fbm(uv * 380.0 - drift * 13.0);
+          float gran3 = fbm((uv.yx + vec2(0.23, 0.71)) * 620.0 + drift * 21.0);
+          float micro = mix(gran1, gran2, 0.45);
+          micro = mix(micro, gran3, 0.24);
+          float hotspots = smoothstep(0.72, 0.98, micro);
 
           vec3 cool = vec3(0.42, 0.66, 1.18);
           vec3 hot = vec3(1.05, 1.28, 1.95);
           vec3 thermal = mix(cool, hot, uTemp);
 
-          float diffuse = 0.22 + 0.58 * nd1 + 0.35 * nd2;
-          vec3 col = (uBaseColor * 0.35 + thermal * 0.95) * diffuse * granularity;
-          col += fres * (thermal + vec3(0.20, 0.34, 0.80)) * 1.35;
-          col += hotspot * thermal * 0.18;
+          vec3 col = thermal * (1.05 + micro * 0.42 + hotspots * 0.25);
+          col *= limb;
+          col += vec3(0.23, 0.56, 1.05) * fres * 0.42;
+          col = mix(col, col * 1.08 + uBaseColor * 0.25, 0.45);
 
-          float outIntensity = mix(0.85, 1.55, clamp(uIntensity, 0.0, 2.0));
+          float outIntensity = mix(1.2, 2.15, clamp(uIntensity, 0.0, 2.2));
           gl_FragColor = vec4(col * outIntensity, 1.0);
-        }
-      `;
-
-      const glowVertexShader = /* glsl */ `
-        varying vec3 vWorldPos;
-        varying vec3 vWorldNormal;
-        void main() {
-          vec4 wp = modelMatrix * vec4(position, 1.0);
-          vWorldPos = wp.xyz;
-          vWorldNormal = normalize(mat3(modelMatrix) * normal);
-          gl_Position = projectionMatrix * viewMatrix * wp;
-        }
-      `;
-
-      const glowFragmentShader = /* glsl */ `
-        precision highp float;
-        uniform vec3 uCamPos;
-        uniform vec3 uColor;
-        uniform float uOpacity;
-        varying vec3 vWorldPos;
-        varying vec3 vWorldNormal;
-        void main() {
-          vec3 N = normalize(vWorldNormal);
-          vec3 V = normalize(uCamPos - vWorldPos);
-          float rim = pow(1.0 - max(dot(N, V), 0.0), 3.6);
-          float alpha = rim * uOpacity;
-          gl_FragColor = vec4(uColor * rim, alpha);
         }
       `;
 
@@ -1011,46 +1032,6 @@
       const star2 = new THREE.Mesh(starGeometry, starMat2);
       scene.add(star1);
       scene.add(star2);
-
-      const glowUniformTemplate = {
-        uCamPos: { value: camera.position.clone() },
-        uColor: { value: new THREE.Color(0.72, 0.86, 1.0) },
-        uOpacity: { value: 0.34 },
-      };
-
-      function cloneGlowUniforms(uniforms) {
-        return {
-          uCamPos: { value: uniforms.uCamPos.value.clone() },
-          uColor: { value: uniforms.uColor.value.clone() },
-          uOpacity: { value: uniforms.uOpacity.value },
-        };
-      }
-
-      const glowShellGeometry = new THREE.SphereGeometry(1.45, 96, 64);
-      const glowMat1 = new THREE.ShaderMaterial({
-        uniforms: cloneGlowUniforms(glowUniformTemplate),
-        vertexShader: glowVertexShader,
-        fragmentShader: glowFragmentShader,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.BackSide,
-      });
-      const glowMat2 = new THREE.ShaderMaterial({
-        uniforms: cloneGlowUniforms(glowUniformTemplate),
-        vertexShader: glowVertexShader,
-        fragmentShader: glowFragmentShader,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.BackSide,
-      });
-
-      const glow1 = new THREE.Mesh(glowShellGeometry, glowMat1);
-      const glow2 = new THREE.Mesh(glowShellGeometry, glowMat2);
-      glow2.material.uniforms.uColor.value.setRGB(0.68, 0.84, 1.0);
-      scene.add(glow1);
-      scene.add(glow2);
 
       const remnant = new THREE.Mesh(
         new THREE.SphereGeometry(0.34, 48, 48),
@@ -1165,9 +1146,9 @@
         jetIntensity: 1.2,
         remnantLum: 1.1,
         bloomStrength: 1.25,
-        chromaticAberration: 0.2,
-        sharpen: 0.25,
-        autoQuality: true,
+        chromaticAberration: 0.08,
+        sharpen: 0.65,
+        autoQuality: false,
         qualityTier: 0,
       };
 
@@ -1190,13 +1171,15 @@
       const tmpStreamDir = new THREE.Vector3();
       const tmpStreamSide = new THREE.Vector3();
       const tmpStreamUp = new THREE.Vector3();
+      const tmpProj1 = new THREE.Vector3();
+      const tmpProj2 = new THREE.Vector3();
       const origin = new THREE.Vector3(0, 0, 0);
 
       const qualityProfiles = [
-        { name: "Ultra", steps: 96, octaves: 4, pixelRatio: Math.min(window.devicePixelRatio, 1.5), bloomRadius: 0.30 },
-        { name: "High", steps: 78, octaves: 3, pixelRatio: Math.min(window.devicePixelRatio, 1.2), bloomRadius: 0.28 },
-        { name: "Medium", steps: 62, octaves: 2, pixelRatio: Math.min(window.devicePixelRatio, 1.0), bloomRadius: 0.26 },
-        { name: "Low", steps: 46, octaves: 1, pixelRatio: 0.85, bloomRadius: 0.24 },
+        { name: "Ultra", steps: 128, octaves: 5, pixelRatio: Math.min(window.devicePixelRatio, 2.0), bloomRadius: 0.30 },
+        { name: "High", steps: 112, octaves: 4, pixelRatio: Math.min(window.devicePixelRatio, 1.8), bloomRadius: 0.28 },
+        { name: "Medium", steps: 88, octaves: 3, pixelRatio: Math.min(window.devicePixelRatio, 1.4), bloomRadius: 0.26 },
+        { name: "Low", steps: 64, octaves: 2, pixelRatio: Math.min(window.devicePixelRatio, 1.1), bloomRadius: 0.24 },
       ];
 
       function smoothstep(edge0, edge1, x) {
@@ -1320,6 +1303,7 @@
       }
 
       autoQualityEl.checked = params.autoQuality;
+      autoQualityValueEl.textContent = params.autoQuality ? "On" : "Off";
       autoQualityEl.addEventListener("change", () => {
         params.autoQuality = autoQualityEl.checked;
         autoQualityValueEl.textContent = params.autoQuality ? "On" : "Off";
@@ -1450,9 +1434,6 @@
         star1.scale.setScalar(1);
         star2.scale.setScalar(1);
 
-        glow1.position.copy(star1.position);
-        glow2.position.copy(star2.position);
-
         const tidal = Math.pow(smoothstep(0.60, 1.0, p), 1.35) * 0.58;
         tmpDir12.subVectors(star2.position, star1.position).normalize();
         tmpDir21.copy(tmpDir12).multiplyScalar(-1);
@@ -1472,15 +1453,9 @@
         starMat2.uniforms.uTime.value = elapsed + 0.35;
         starMat1.uniforms.uCamPos.value.copy(camera.position);
         starMat2.uniforms.uCamPos.value.copy(camera.position);
-        glowMat1.uniforms.uCamPos.value.copy(camera.position);
-        glowMat2.uniforms.uCamPos.value.copy(camera.position);
-        glowMat1.uniforms.uOpacity.value = 0.28 + 0.22 * smoothstep(0.0, 1.0, p);
-        glowMat2.uniforms.uOpacity.value = glowMat1.uniforms.uOpacity.value;
 
         star1.visible = true;
         star2.visible = true;
-        glow1.visible = true;
-        glow2.visible = true;
         remnant.visible = false;
 
         updateStreams(p, elapsed);
@@ -1494,8 +1469,6 @@
 
         star1.visible = p < 0.65;
         star2.visible = p < 0.65;
-        glow1.visible = p < 0.65;
-        glow2.visible = p < 0.65;
 
         const collapse = 1.0 - smoothstep(0.0, 1.0, p);
         star1.scale.setScalar(0.6 + 0.4 * collapse);
@@ -1503,12 +1476,6 @@
 
         star1.position.lerp(origin, 0.14 + p * 0.2);
         star2.position.lerp(origin, 0.14 + p * 0.2);
-        glow1.position.copy(star1.position);
-        glow2.position.copy(star2.position);
-        glowMat1.uniforms.uCamPos.value.copy(camera.position);
-        glowMat2.uniforms.uCamPos.value.copy(camera.position);
-        glowMat1.uniforms.uOpacity.value = 0.22 * (1.0 - p);
-        glowMat2.uniforms.uOpacity.value = glowMat1.uniforms.uOpacity.value;
 
         streamPoints.visible = false;
 
@@ -1525,8 +1492,6 @@
 
         star1.visible = false;
         star2.visible = false;
-        glow1.visible = false;
-        glow2.visible = false;
         streamPoints.visible = false;
 
         remnant.visible = true;
@@ -1634,6 +1599,33 @@
         postMaterial.uniforms.uChromAb.value = params.chromaticAberration;
         postMaterial.uniforms.uSharpen.value = params.sharpen;
 
+        let starVis1 = 0.0;
+        let starVis2 = 0.0;
+        if (star1.visible) {
+          tmpProj1.copy(star1.position).project(camera);
+          if (tmpProj1.z > -1.0 && tmpProj1.z < 1.0) {
+            postMaterial.uniforms.uStarScreen1.value.set(tmpProj1.x * 0.5 + 0.5, tmpProj1.y * 0.5 + 0.5);
+            starVis1 = 1.0;
+          } else {
+            postMaterial.uniforms.uStarScreen1.value.set(-10, -10);
+          }
+        } else {
+          postMaterial.uniforms.uStarScreen1.value.set(-10, -10);
+        }
+        if (star2.visible) {
+          tmpProj2.copy(star2.position).project(camera);
+          if (tmpProj2.z > -1.0 && tmpProj2.z < 1.0) {
+            postMaterial.uniforms.uStarScreen2.value.set(tmpProj2.x * 0.5 + 0.5, tmpProj2.y * 0.5 + 0.5);
+            starVis2 = 1.0;
+          } else {
+            postMaterial.uniforms.uStarScreen2.value.set(-10, -10);
+          }
+        } else {
+          postMaterial.uniforms.uStarScreen2.value.set(-10, -10);
+        }
+        postMaterial.uniforms.uStarVis1.value = starVis1;
+        postMaterial.uniforms.uStarVis2.value = starVis2;
+
         hudAct.textContent = `Current Act: Act ${state.act} - ${actLabel}`;
         hudSim.textContent = `Simulation Time: t = ${state.simTime.toFixed(1)}s / ${TOTAL_DURATION.toFixed(1)}s`;
         if (state.act === 3) {
@@ -1685,18 +1677,12 @@
         const elapsed = clock.getElapsedTime();
         updateAct(elapsed);
 
-        if (state.act === 1) {
-          renderer.setRenderTarget(null);
-          renderer.clear();
-          renderer.render(scene, camera);
-        } else {
-          renderer.setRenderTarget(baseTarget);
-          renderer.clear();
-          renderer.render(scene, camera);
-          renderer.setRenderTarget(null);
-          renderer.clear();
-          renderer.render(postScene, postCamera);
-        }
+        renderer.setRenderTarget(baseTarget);
+        renderer.clear();
+        renderer.render(scene, camera);
+        renderer.setRenderTarget(null);
+        renderer.clear();
+        renderer.render(postScene, postCamera);
       }
 
       animate();
