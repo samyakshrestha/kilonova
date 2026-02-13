@@ -1,0 +1,1705 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Real-Time Kilonova Visualization</title>
+    <style>
+      :root {
+        --panel-bg: rgba(7, 10, 18, 0.82);
+        --panel-border: rgba(120, 170, 255, 0.24);
+        --text: #e8f0ff;
+        --muted: #9bb1d7;
+        --accent: #8cc7ff;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        font-family: "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+        color: var(--text);
+      }
+
+      #app {
+        position: fixed;
+        inset: 0;
+      }
+
+      #ui {
+        position: fixed;
+        top: 52px;
+        right: 12px;
+        width: min(360px, calc(100vw - 24px));
+        max-height: calc(100vh - 64px);
+        overflow-y: auto;
+        padding: 12px;
+        border: 1px solid var(--panel-border);
+        border-radius: 14px;
+        background: var(--panel-bg);
+        backdrop-filter: blur(8px);
+        box-shadow: 0 10px 34px rgba(0, 0, 0, 0.4);
+        z-index: 10;
+      }
+
+      #settingsToggle {
+        position: fixed;
+        right: 12px;
+        top: 12px;
+        z-index: 12;
+        border: 1px solid rgba(157, 196, 255, 0.45);
+        border-radius: 10px;
+        padding: 7px 10px;
+        background: rgba(7, 12, 24, 0.82);
+        color: #e8f0ff;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+      }
+
+      #ui.collapsed {
+        display: none;
+      }
+
+      #ui h1 {
+        margin: 0 0 10px;
+        font-size: 16px;
+        letter-spacing: 0.04em;
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .row + .row {
+        margin-top: 8px;
+      }
+
+      .buttons button {
+        flex: 1;
+      }
+
+      label {
+        display: block;
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .label-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 2px;
+      }
+
+      .value {
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        accent-color: #7db6ff;
+      }
+
+      button,
+      select,
+      input[type="checkbox"] {
+        cursor: pointer;
+      }
+
+      button {
+        border: 1px solid rgba(157, 196, 255, 0.4);
+        border-radius: 9px;
+        padding: 6px 8px;
+        background: rgba(57, 78, 116, 0.32);
+        color: var(--text);
+      }
+
+      button:hover {
+        background: rgba(91, 120, 167, 0.35);
+      }
+
+      details {
+        margin-top: 10px;
+        border-top: 1px solid rgba(153, 186, 242, 0.2);
+        padding-top: 8px;
+      }
+
+      summary {
+        cursor: pointer;
+        color: #d4e3ff;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .hint {
+        margin: 6px 0 0;
+        font-size: 11px;
+        color: #b2c5e9;
+        line-height: 1.3;
+      }
+
+      #hud {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(140, 182, 255, 0.25);
+        background: rgba(4, 7, 14, 0.7);
+        font-size: 12px;
+        line-height: 1.4;
+        color: #d5e6ff;
+        z-index: 10;
+        font-variant-numeric: tabular-nums;
+      }
+
+      #hud .label {
+        color: #9fb5dc;
+      }
+
+      #bootWarning {
+        position: fixed;
+        left: 50%;
+        top: 14px;
+        transform: translateX(-50%);
+        z-index: 20;
+        max-width: min(94vw, 760px);
+        padding: 9px 12px;
+        border: 1px solid rgba(255, 170, 170, 0.55);
+        border-radius: 10px;
+        background: rgba(56, 13, 13, 0.9);
+        color: #ffd4d4;
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      #legend {
+        position: fixed;
+        left: 12px;
+        bottom: 10px;
+        color: #d2e3ff;
+        font-size: 11px;
+        letter-spacing: 0.02em;
+        z-index: 10;
+        padding: 7px 9px;
+        border-radius: 9px;
+        background: rgba(6, 10, 18, 0.65);
+        border: 1px solid rgba(120, 170, 255, 0.2);
+      }
+
+      @media (max-width: 760px) {
+        #ui {
+          width: calc(100vw - 18px);
+          right: 9px;
+          top: 46px;
+          max-height: calc(100vh - 56px);
+          font-size: 12px;
+        }
+
+        #settingsToggle {
+          right: 9px;
+          top: 9px;
+        }
+
+        #hud {
+          top: auto;
+          bottom: 9px;
+          left: 9px;
+        }
+
+        #legend {
+          left: auto;
+          right: 9px;
+          bottom: 9px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <button id="settingsToggle" type="button" aria-expanded="true">Hide Settings ⚙</button>
+
+    <div id="ui">
+      <h1>Kilonova - Real-Time Renderer</h1>
+
+      <div class="row buttons">
+        <button id="playPause">Pause</button>
+        <button id="restart">Restart</button>
+      </div>
+
+      <label>
+        <div class="label-top">
+          <span>Timeline</span>
+          <span class="value" id="timelineValue">0.0 s</span>
+        </div>
+        <input id="timeline" type="range" min="0" max="1000" step="1" value="0" />
+      </label>
+
+      <label>
+        <div class="label-top">
+          <span>Time Scale</span>
+          <span class="value" id="timeScaleValue">1.00x</span>
+        </div>
+        <input id="timeScale" type="range" min="0.1" max="4" step="0.01" value="1" />
+      </label>
+
+      <details open>
+        <summary>Camera</summary>
+        <div class="row buttons" style="margin-top: 8px">
+          <button data-preset="wide">Wide</button>
+          <button data-preset="orbital">Orbital</button>
+          <button data-preset="polar">Polar</button>
+          <button data-preset="equatorial">Equatorial</button>
+        </div>
+        <p class="hint">Mouse controls: drag = orbit, scroll = zoom, right-drag = pan.</p>
+      </details>
+
+      <details open>
+        <summary>Physical Parameters</summary>
+
+        <label>
+          <div class="label-top">
+            <span>Neutron Star Mass m1 (Msun)</span>
+            <span class="value" id="m1Value"></span>
+          </div>
+          <input id="m1" type="range" min="1.0" max="2.2" step="0.01" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Neutron Star Mass m2 (Msun)</span>
+            <span class="value" id="m2Value"></span>
+          </div>
+          <input id="m2" type="range" min="1.0" max="2.2" step="0.01" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Ejecta Mass (Msun)</span>
+            <span class="value" id="ejectaMassValue"></span>
+          </div>
+          <input id="ejectaMass" type="range" min="0.01" max="0.20" step="0.001" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Polar Velocity (c)</span>
+            <span class="value" id="polarVelValue"></span>
+          </div>
+          <input id="polarVel" type="range" min="0.15" max="0.45" step="0.001" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Equatorial Velocity (c)</span>
+            <span class="value" id="eqVelValue"></span>
+          </div>
+          <input id="eqVel" type="range" min="0.05" max="0.20" step="0.001" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Opacity Contrast</span>
+            <span class="value" id="opacityContrastValue"></span>
+          </div>
+          <input id="opacityContrast" type="range" min="0.5" max="2.5" step="0.01" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>RT Instability Strength</span>
+            <span class="value" id="rtStrengthValue"></span>
+          </div>
+          <input id="rtStrength" type="range" min="0.0" max="3.0" step="0.01" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Jet Angle (deg)</span>
+            <span class="value" id="jetAngleValue"></span>
+          </div>
+          <input id="jetAngle" type="range" min="5" max="30" step="0.1" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Jet Intensity</span>
+            <span class="value" id="jetIntensityValue"></span>
+          </div>
+          <input id="jetIntensity" type="range" min="0" max="3" step="0.01" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Remnant Luminosity</span>
+            <span class="value" id="remnantLumValue"></span>
+          </div>
+          <input id="remnantLum" type="range" min="0" max="3" step="0.01" />
+        </label>
+      </details>
+
+      <details open>
+        <summary>Rendering</summary>
+
+        <label>
+          <div class="label-top">
+            <span>Bloom Strength</span>
+            <span class="value" id="bloomStrengthValue"></span>
+          </div>
+          <input id="bloomStrength" type="range" min="0" max="3" step="0.01" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Chromatic Aberration</span>
+            <span class="value" id="chromaticAberrationValue"></span>
+          </div>
+          <input id="chromaticAberration" type="range" min="0" max="2.0" step="0.01" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Image Sharpening</span>
+            <span class="value" id="sharpenValue"></span>
+          </div>
+          <input id="sharpen" type="range" min="0" max="2.0" step="0.01" />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Auto Quality</span>
+            <span class="value" id="autoQualityValue">On</span>
+          </div>
+          <input id="autoQuality" type="checkbox" checked />
+        </label>
+
+        <label>
+          <div class="label-top">
+            <span>Manual Quality Tier</span>
+            <span class="value" id="qualityTierValue"></span>
+          </div>
+          <input id="qualityTier" type="range" min="0" max="3" step="1" />
+        </label>
+      </details>
+    </div>
+
+    <div id="hud">
+      <div id="hudAct"></div>
+      <div id="hudSim"></div>
+      <div id="hudPhys"></div>
+      <div id="hudFPS"></div>
+      <div id="hudQuality"></div>
+      <div id="hudSteps"></div>
+    </div>
+
+    <div id="legend">Act 1: Inspiral | Act 2: Collision | Act 3: Kilonova Expansion</div>
+    <div id="bootWarning" hidden>
+      Renderer did not initialize. Check browser console for errors and ensure CDN scripts can load.
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script>
+      window.__kilonovaBooted = false;
+      window.addEventListener("DOMContentLoaded", () => {
+        window.setTimeout(() => {
+          if (!window.__kilonovaBooted) {
+            const warning = document.getElementById("bootWarning");
+            if (warning) {
+              warning.hidden = false;
+            }
+          }
+        }, 1600);
+      });
+    </script>
+
+    <script>
+      if (!window.THREE) {
+        throw new Error("THREE failed to load from CDN.");
+      }
+
+      window.__kilonovaBooted = true;
+      const bootWarningEl = document.getElementById("bootWarning");
+      if (bootWarningEl) {
+        bootWarningEl.hidden = true;
+      }
+
+      const app = document.getElementById("app");
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.0));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.0;
+      app.appendChild(renderer.domElement);
+      renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x02040a);
+      const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.05, 400);
+      camera.position.set(0, 2.8, 14.8);
+
+      class SimpleOrbitControls {
+        constructor(cam, domElement) {
+          this.camera = cam;
+          this.domElement = domElement;
+          this.target = new THREE.Vector3();
+          this.enableDamping = true;
+          this.dampingFactor = 0.08;
+          this.minDistance = 2.8;
+          this.maxDistance = 85;
+          this.rotateSpeed = 0.005;
+          this.zoomSpeed = 0.0018;
+          this.panSpeed = 0.0018;
+
+          this._state = 0;
+          this._lastX = 0;
+          this._lastY = 0;
+          this._spherical = new THREE.Spherical();
+          this._sphericalDelta = new THREE.Spherical(0, 0, 0);
+          this._panOffset = new THREE.Vector3();
+          this._offset = new THREE.Vector3();
+          this._right = new THREE.Vector3();
+          this._up = new THREE.Vector3();
+
+          this._updateSphericalFromCamera();
+          this._bind();
+        }
+
+        _updateSphericalFromCamera() {
+          this._offset.copy(this.camera.position).sub(this.target);
+          this._spherical.setFromVector3(this._offset);
+          this._spherical.makeSafe();
+        }
+
+        _bind() {
+          this.domElement.addEventListener("pointerdown", (e) => {
+            if (e.button === 0) {
+              this._state = 1;
+            } else if (e.button === 2) {
+              this._state = 2;
+            } else {
+              this._state = 0;
+            }
+            this._lastX = e.clientX;
+            this._lastY = e.clientY;
+          });
+
+          window.addEventListener("pointerup", () => {
+            this._state = 0;
+          });
+
+          window.addEventListener("pointermove", (e) => {
+            if (this._state === 0) {
+              return;
+            }
+            const dx = e.clientX - this._lastX;
+            const dy = e.clientY - this._lastY;
+            this._lastX = e.clientX;
+            this._lastY = e.clientY;
+
+            if (this._state === 1) {
+              this._sphericalDelta.theta -= dx * this.rotateSpeed;
+              this._sphericalDelta.phi -= dy * this.rotateSpeed;
+            } else if (this._state === 2) {
+              this.camera.updateMatrixWorld();
+              const te = this.camera.matrix.elements;
+              this._right.set(te[0], te[1], te[2]).normalize();
+              this._up.set(te[4], te[5], te[6]).normalize();
+              const dist = this.camera.position.distanceTo(this.target);
+              const scale = dist * this.panSpeed;
+              this._panOffset.addScaledVector(this._right, -dx * scale);
+              this._panOffset.addScaledVector(this._up, dy * scale);
+            }
+          });
+
+          this.domElement.addEventListener(
+            "wheel",
+            (e) => {
+              e.preventDefault();
+              this._spherical.radius *= Math.exp(e.deltaY * this.zoomSpeed);
+              this._spherical.radius = Math.min(this.maxDistance, Math.max(this.minDistance, this._spherical.radius));
+            },
+            { passive: false }
+          );
+        }
+
+        update() {
+          this._spherical.theta += this._sphericalDelta.theta;
+          this._spherical.phi += this._sphericalDelta.phi;
+          this._spherical.makeSafe();
+          this._spherical.radius = Math.min(this.maxDistance, Math.max(this.minDistance, this._spherical.radius));
+          this.target.add(this._panOffset);
+          this._offset.setFromSpherical(this._spherical);
+          this.camera.position.copy(this.target).add(this._offset);
+          this.camera.lookAt(this.target);
+
+          if (this.enableDamping) {
+            const damp = 1.0 - this.dampingFactor;
+            this._sphericalDelta.theta *= damp;
+            this._sphericalDelta.phi *= damp;
+            this._panOffset.multiplyScalar(damp);
+          } else {
+            this._sphericalDelta.theta = 0;
+            this._sphericalDelta.phi = 0;
+            this._panOffset.set(0, 0, 0);
+          }
+        }
+      }
+
+      const controls = new SimpleOrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 0.0, 0);
+
+      const rtType = renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType;
+      const baseTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+        type: rtType,
+        format: THREE.RGBAFormat,
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        depthBuffer: true,
+      });
+
+      const postScene = new THREE.Scene();
+      const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      const postGeometry = new THREE.PlaneGeometry(2, 2);
+
+      const postShader = {
+        uniforms: {
+          tBase: { value: baseTarget.texture },
+          uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+          uCamPos: { value: new THREE.Vector3() },
+          uInvProj: { value: new THREE.Matrix4() },
+          uInvView: { value: new THREE.Matrix4() },
+          uTime: { value: 0 },
+          uAct: { value: 1.0 },
+          uAct2Progress: { value: 0.0 },
+          uAct3Progress: { value: 0.0 },
+          uDays: { value: 0.03 },
+          uCollisionFlash: { value: 0.0 },
+          uEnergyScale: { value: 1.0 },
+          uEjectaMass: { value: 0.05 },
+          uPolarVel: { value: 0.30 },
+          uEqVel: { value: 0.10 },
+          uOpacityContrast: { value: 1.4 },
+          uRTStrength: { value: 1.1 },
+          uJetAngle: { value: 12.0 },
+          uJetIntensity: { value: 1.2 },
+          uRemnantLum: { value: 1.1 },
+          uSteps: { value: 96.0 },
+          uNoiseOctaves: { value: 4.0 },
+          uBloomStrength: { value: 1.25 },
+          uChromAb: { value: 0.20 },
+          uSharpen: { value: 0.25 },
+        },
+        vertexShader: /* glsl */ `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = vec4(position.xy, 0.0, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          precision highp float;
+
+          varying vec2 vUv;
+          uniform sampler2D tBase;
+          uniform vec2 uResolution;
+          uniform vec3 uCamPos;
+          uniform mat4 uInvProj;
+          uniform mat4 uInvView;
+          uniform float uTime;
+          uniform float uAct;
+          uniform float uAct2Progress;
+          uniform float uAct3Progress;
+          uniform float uDays;
+          uniform float uCollisionFlash;
+          uniform float uEnergyScale;
+          uniform float uEjectaMass;
+          uniform float uPolarVel;
+          uniform float uEqVel;
+          uniform float uOpacityContrast;
+          uniform float uRTStrength;
+          uniform float uJetAngle;
+          uniform float uJetIntensity;
+          uniform float uRemnantLum;
+          uniform float uSteps;
+          uniform float uNoiseOctaves;
+          uniform float uBloomStrength;
+          uniform float uChromAb;
+          uniform float uSharpen;
+
+          #define MAX_STEPS 128
+
+          float hash11(float p) {
+            p = fract(p * 0.1031);
+            p *= p + 33.33;
+            p *= p + p;
+            return fract(p);
+          }
+
+          float hash31(vec3 p3) {
+            p3 = fract(p3 * 0.1031);
+            p3 += dot(p3, p3.yzx + 33.33);
+            return fract((p3.x + p3.y) * p3.z);
+          }
+
+          float noise3(vec3 p) {
+            vec3 i = floor(p);
+            vec3 f = fract(p);
+            f = f * f * (3.0 - 2.0 * f);
+
+            float n000 = hash31(i + vec3(0.0, 0.0, 0.0));
+            float n100 = hash31(i + vec3(1.0, 0.0, 0.0));
+            float n010 = hash31(i + vec3(0.0, 1.0, 0.0));
+            float n110 = hash31(i + vec3(1.0, 1.0, 0.0));
+            float n001 = hash31(i + vec3(0.0, 0.0, 1.0));
+            float n101 = hash31(i + vec3(1.0, 0.0, 1.0));
+            float n011 = hash31(i + vec3(0.0, 1.0, 1.0));
+            float n111 = hash31(i + vec3(1.0, 1.0, 1.0));
+
+            float nx00 = mix(n000, n100, f.x);
+            float nx10 = mix(n010, n110, f.x);
+            float nx01 = mix(n001, n101, f.x);
+            float nx11 = mix(n011, n111, f.x);
+
+            float nxy0 = mix(nx00, nx10, f.y);
+            float nxy1 = mix(nx01, nx11, f.y);
+
+            return mix(nxy0, nxy1, f.z);
+          }
+
+          float fbm(vec3 p, float octaves) {
+            float sum = 0.0;
+            float amp = 0.5;
+            float freq = 1.0;
+            for (int i = 0; i < 6; i++) {
+              if (float(i) >= octaves) {
+                break;
+              }
+              sum += amp * noise3(p * freq);
+              freq *= 2.0;
+              amp *= 0.5;
+            }
+            return sum;
+          }
+
+          vec2 raySphere(vec3 ro, vec3 rd, float radius) {
+            float b = dot(ro, rd);
+            float c = dot(ro, ro) - radius * radius;
+            float h = b * b - c;
+            if (h < 0.0) {
+              return vec2(1e9, -1e9);
+            }
+            h = sqrt(h);
+            return vec2(-b - h, -b + h);
+          }
+
+          vec3 sampleBase(vec2 uv) {
+            return texture2D(tBase, clamp(uv, 0.0, 1.0)).rgb;
+          }
+
+          void main() {
+            vec2 center = vec2(0.5);
+            vec2 dirToCenter = (vUv - center);
+            float distToCenter = length(dirToCenter);
+            vec2 nDir = distToCenter > 1e-5 ? dirToCenter / distToCenter : vec2(0.0, 0.0);
+
+            float ab = uChromAb * 0.0024 * (0.4 + distToCenter * 1.35);
+            vec3 caColor;
+            caColor.r = sampleBase(vUv + nDir * ab).r;
+            caColor.g = sampleBase(vUv).g;
+            caColor.b = sampleBase(vUv - nDir * ab).b;
+
+            vec2 texel = 1.0 / uResolution;
+            vec3 b0 = sampleBase(vUv + vec2(texel.x, 0.0));
+            vec3 b1 = sampleBase(vUv - vec2(texel.x, 0.0));
+            vec3 b2 = sampleBase(vUv + vec2(0.0, texel.y));
+            vec3 b3 = sampleBase(vUv - vec2(0.0, texel.y));
+            vec3 blurBase = (b0 + b1 + b2 + b3) * 0.25;
+            vec3 sceneColor = max(caColor + (caColor - blurBase) * (uSharpen * 1.25), vec3(0.0));
+
+            vec3 accum = vec3(0.0);
+
+            if (uAct >= 1.5) {
+              vec2 ndc = vUv * 2.0 - 1.0;
+              vec4 clip = vec4(ndc, 1.0, 1.0);
+              vec4 view = uInvProj * clip;
+              view /= max(view.w, 1e-6);
+              vec3 rd = normalize((uInvView * vec4(view.xyz, 0.0)).xyz);
+              vec3 ro = uCamPos;
+
+              float boundRadius = (15.0 + 6.0 * uEnergyScale);
+              vec2 hit = raySphere(ro, rd, boundRadius);
+              if (hit.x <= hit.y) {
+                float tNear = max(hit.x, 0.0);
+                float tFar = hit.y;
+                float totalDist = max(1e-4, tFar - tNear);
+                float dt = totalDist / max(1.0, uSteps);
+                float jitter = (hash11(dot(vUv, vec2(113.17, 91.73)) + uTime) - 0.5) * dt;
+
+                float evo = clamp(uAct3Progress, 0.0, 1.0);
+                float mNorm = clamp((uEjectaMass - 0.01) / 0.19, 0.0, 1.0);
+                float densityScale = mix(0.6, 2.0, mNorm);
+                float opacityScale = mix(0.7, 2.6, mNorm);
+                float vpScale = uPolarVel / 0.30;
+                float veScale = uEqVel / 0.10;
+
+                float Rp = mix(1.2, 12.4 * uEnergyScale * vpScale, pow(evo, 0.82));
+                float Re = mix(0.9, 8.7 * uEnergyScale * veScale, pow(evo, 0.9));
+                float thickP = mix(0.35, 1.0, evo);
+                float thickE = mix(0.45, 1.35, evo);
+                float Rrs = mix(Re, Rp, 0.62);
+
+                float tDays = max(uDays, 0.03);
+                float heatNorm = clamp(pow(tDays, -1.3) / 95.0, 0.06, 1.2);
+
+                vec3 colorBlue = vec3(0.68, 0.83, 1.00);
+                vec3 colorPurple = vec3(0.91, 0.52, 1.00);
+                vec3 colorRed = vec3(1.00, 0.42, 0.16);
+                vec3 colorJet = vec3(0.74, 0.93, 1.36);
+
+                float pBlueShift = smoothstep(0.18, 0.62, evo);
+                float eRedShift = smoothstep(0.30, 1.00, evo);
+                vec3 colPolar = mix(colorBlue, colorPurple, pBlueShift);
+                vec3 colEq = mix(vec3(0.83, 0.44, 0.62), colorRed, eRedShift);
+                vec3 colRS = vec3(1.00, 0.48, 0.95);
+                vec3 colRT = mix(vec3(0.90, 0.58, 1.00), vec3(1.00, 0.56, 0.28), eRedShift);
+
+                float trans = 1.0;
+
+                for (int i = 0; i < MAX_STEPS; i++) {
+                  if (float(i) >= uSteps) {
+                    break;
+                  }
+
+                  float t = tNear + jitter + (float(i) + 0.5) * dt;
+                  vec3 p = ro + rd * t;
+                  float r = length(p);
+                  vec3 n = p / max(r, 1e-5);
+
+                  float pole = pow(abs(n.z), 3.7);
+                  float equa = pow(max(0.0, 1.0 - abs(n.z)), 2.05);
+
+                  float rhoP = exp(-pow((r - Rp) / thickP, 2.0)) * pole;
+                  float rhoE = exp(-pow((r - Re) / thickE, 2.0)) * equa;
+
+                  float rsThickness = mix(0.18, 0.45, evo);
+                  float rhoRS = exp(-pow((r - Rrs) / rsThickness, 2.0)) * mix(0.75 * equa, 0.65 * pole, 0.4);
+
+                  float rtLayer = exp(-pow((r - mix(Re, Rp, 0.52)) / (thickE * 1.1 + 0.08), 2.0));
+                  float rtGrowth = pow(evo, 1.55) * uRTStrength;
+                  vec3 warpP = p * 0.85 + vec3(0.0, 0.0, uTime * 0.23);
+                  float warp = fbm(warpP * 0.95, uNoiseOctaves);
+                  float fingers = smoothstep(0.50, 0.89, fbm(warpP * 2.15 + warp * 2.3 * n, uNoiseOctaves));
+                  float phi = atan(n.y, n.x);
+                  float branch = 0.5 + 0.5 * sin(phi * 13.0 + uTime * 0.74 + warp * 5.3);
+                  float rhoRT = rtLayer * fingers * (0.35 + 1.75 * branch) * rtGrowth;
+
+                  float angle = radians(max(4.0, uJetAngle));
+                  float axisR = length(p.xy);
+                  float coneR = abs(p.z) * tan(angle) + 0.08;
+                  float jetCore = exp(-pow(axisR / (coneR * 0.58), 2.0));
+                  float along = smoothstep(0.25, 2.5, abs(p.z));
+                  float jetNoise = 0.54 + 0.46 * fbm(vec3(axisR * 3.7, p.z * 1.2, uTime * 0.9), uNoiseOctaves);
+                  float rhoJet = jetCore * along * jetNoise * uJetIntensity * (1.0 - smoothstep(Rp * 1.36, Rp * 1.92, r));
+
+                  float rhoAmbient = exp(-pow((r - Rp * 1.16) / (thickP * 0.9 + 0.18), 2.0)) * 0.22;
+
+                  float eqEmergence = smoothstep(0.20, 0.95, evo);
+                  float polarFade = 1.0 - smoothstep(0.28, 0.98, evo);
+
+                  float boundaryP = exp(-pow((r - Rp) / (thickP * 0.55 + 1e-3), 2.0));
+                  float boundaryE = exp(-pow((r - Re) / (thickE * 0.55 + 1e-3), 2.0));
+                  float shockBoost = 1.0 + 1.4 * (boundaryP * boundaryE + 0.45 * boundaryP);
+
+                  vec3 emiss = vec3(0.0);
+                  emiss += rhoP * (1.65 * polarFade + 0.45) * colPolar;
+                  emiss += rhoE * (0.45 + 1.15 * eqEmergence) * colEq;
+                  emiss += rhoRS * 1.95 * colRS;
+                  emiss += rhoRT * 1.20 * colRT;
+                  emiss += rhoJet * 2.10 * colorJet;
+                  emiss += rhoAmbient * 0.55 * vec3(0.92, 0.64, 0.86);
+                  emiss *= heatNorm * shockBoost;
+
+                  float corePulse = 0.68 + 0.32 * sin(uTime * 9.0);
+                  float coreGlow = exp(-pow(r / 0.36, 2.0)) * (0.95 + 0.8 * corePulse) * uRemnantLum;
+                  emiss += coreGlow * vec3(2.0, 1.7, 2.4);
+
+                  if (uAct < 2.5) {
+                    float blastR = 1.5 + 8.0 * uAct2Progress;
+                    float blast = exp(-pow((r - blastR) / (0.22 + 0.35 * uAct2Progress), 2.0));
+                    emiss += blast * uCollisionFlash * vec3(4.3, 3.3, 2.6);
+                    emiss += exp(-pow(r / 1.2, 2.0)) * uCollisionFlash * vec3(6.0, 5.4, 7.2);
+                  }
+
+                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.25 + rhoAmbient * 0.4);
+                  sigma *= opacityScale * densityScale * 0.34;
+
+                  float alpha = 1.0 - exp(-sigma * dt);
+                  vec3 contrib = emiss * alpha;
+                  accum += trans * contrib;
+                  trans *= (1.0 - alpha);
+
+                  if (trans < 0.01) {
+                    break;
+                  }
+                }
+              }
+            }
+
+            vec3 outColor = sceneColor + accum;
+            float luminance = dot(outColor, vec3(0.2126, 0.7152, 0.0722));
+            float bloomMask = smoothstep(0.55, 1.8, luminance);
+            vec3 bloomColor = blurBase * bloomMask * (0.9 * uBloomStrength);
+            outColor += bloomColor + accum * (0.12 * uBloomStrength);
+            gl_FragColor = vec4(max(outColor, vec3(0.0)), 1.0);
+          }
+        `,
+      };
+
+      const postMaterial = new THREE.ShaderMaterial({
+        uniforms: postShader.uniforms,
+        vertexShader: postShader.vertexShader,
+        fragmentShader: postShader.fragmentShader,
+        depthTest: false,
+        depthWrite: false,
+      });
+      const postQuad = new THREE.Mesh(postGeometry, postMaterial);
+      postScene.add(postQuad);
+
+      const starVertexShader = /* glsl */ `
+        uniform vec3 uDeformDir;
+        uniform float uDeform;
+        uniform float uTime;
+        varying vec3 vWorldPos;
+        varying vec3 vWorldNormal;
+        varying vec3 vLocalPos;
+
+        void main() {
+          vec3 p = position;
+          vec3 d = normalize(uDeformDir + vec3(1e-6));
+          float pull = dot(normalize(p), d);
+          p += d * pull * uDeform * 0.34;
+          p += normal * (0.018 * uDeform) * sin(uTime * 1.5 + position.y * 14.0 + position.x * 6.0);
+
+          vec4 wp = modelMatrix * vec4(p, 1.0);
+          vWorldPos = wp.xyz;
+          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          vLocalPos = normalize(p);
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `;
+
+      const starFragmentShader = /* glsl */ `
+        precision highp float;
+        uniform vec3 uCamPos;
+        uniform float uTemp;
+        uniform float uIntensity;
+        uniform vec3 uBaseColor;
+        varying vec3 vWorldPos;
+        varying vec3 vWorldNormal;
+        varying vec3 vLocalPos;
+
+        float pattern(vec3 p) {
+          float t0 = sin(p.x * 18.0 + p.y * 10.0);
+          float t1 = sin(p.z * 17.0 - p.y * 13.0);
+          float t2 = sin((p.x + p.z) * 22.0);
+          return (t0 + t1 + t2) * 0.1667 + 0.5;
+        }
+
+        void main() {
+          vec3 N = normalize(vWorldNormal);
+          vec3 V = normalize(uCamPos - vWorldPos);
+          vec3 L1 = normalize(vec3(0.36, 0.24, 0.90));
+          vec3 L2 = normalize(vec3(-0.28, -0.22, 0.93));
+          float nd1 = max(dot(N, L1), 0.0);
+          float nd2 = max(dot(N, L2), 0.0);
+          float fres = pow(1.0 - max(dot(N, V), 0.0), 3.2);
+
+          float surf = pattern(vLocalPos);
+          float hotspot = smoothstep(0.62, 1.0, pattern(vLocalPos.yzx * 1.2));
+          float granularity = 0.90 + 0.28 * surf + 0.22 * hotspot;
+
+          vec3 cool = vec3(0.42, 0.66, 1.18);
+          vec3 hot = vec3(1.05, 1.28, 1.95);
+          vec3 thermal = mix(cool, hot, uTemp);
+
+          float diffuse = 0.22 + 0.58 * nd1 + 0.35 * nd2;
+          vec3 col = (uBaseColor * 0.35 + thermal * 0.95) * diffuse * granularity;
+          col += fres * (thermal + vec3(0.20, 0.34, 0.80)) * 1.35;
+          col += hotspot * thermal * 0.18;
+
+          float outIntensity = mix(0.85, 1.55, clamp(uIntensity, 0.0, 2.0));
+          gl_FragColor = vec4(col * outIntensity, 1.0);
+        }
+      `;
+
+      const glowVertexShader = /* glsl */ `
+        varying vec3 vWorldPos;
+        varying vec3 vWorldNormal;
+        void main() {
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorldPos = wp.xyz;
+          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `;
+
+      const glowFragmentShader = /* glsl */ `
+        precision highp float;
+        uniform vec3 uCamPos;
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        varying vec3 vWorldPos;
+        varying vec3 vWorldNormal;
+        void main() {
+          vec3 N = normalize(vWorldNormal);
+          vec3 V = normalize(uCamPos - vWorldPos);
+          float rim = pow(1.0 - max(dot(N, V), 0.0), 3.6);
+          float alpha = rim * uOpacity;
+          gl_FragColor = vec4(uColor * rim, alpha);
+        }
+      `;
+
+      const starGeometry = new THREE.SphereGeometry(1.0, 128, 96);
+      const starUniformTemplate = {
+        uCamPos: { value: camera.position.clone() },
+        uTemp: { value: 0.65 },
+        uIntensity: { value: 1.0 },
+        uBaseColor: { value: new THREE.Color(0.58, 0.75, 1.0) },
+        uDeformDir: { value: new THREE.Vector3(1, 0, 0) },
+        uDeform: { value: 0.0 },
+        uTime: { value: 0.0 },
+      };
+
+      function cloneUniforms(uniforms) {
+        return {
+          uCamPos: { value: uniforms.uCamPos.value.clone() },
+          uTemp: { value: uniforms.uTemp.value },
+          uIntensity: { value: uniforms.uIntensity.value },
+          uBaseColor: { value: uniforms.uBaseColor.value.clone() },
+          uDeformDir: { value: uniforms.uDeformDir.value.clone() },
+          uDeform: { value: uniforms.uDeform.value },
+          uTime: { value: uniforms.uTime.value },
+        };
+      }
+
+      const starMat1 = new THREE.ShaderMaterial({
+        uniforms: cloneUniforms(starUniformTemplate),
+        vertexShader: starVertexShader,
+        fragmentShader: starFragmentShader,
+        transparent: false,
+      });
+      starMat1.uniforms.uBaseColor.value.setRGB(0.58, 0.77, 1.0);
+
+      const starMat2 = new THREE.ShaderMaterial({
+        uniforms: cloneUniforms(starUniformTemplate),
+        vertexShader: starVertexShader,
+        fragmentShader: starFragmentShader,
+        transparent: false,
+      });
+      starMat2.uniforms.uBaseColor.value.setRGB(0.64, 0.80, 1.0);
+
+      const star1 = new THREE.Mesh(starGeometry, starMat1);
+      const star2 = new THREE.Mesh(starGeometry, starMat2);
+      scene.add(star1);
+      scene.add(star2);
+
+      const glowUniformTemplate = {
+        uCamPos: { value: camera.position.clone() },
+        uColor: { value: new THREE.Color(0.72, 0.86, 1.0) },
+        uOpacity: { value: 0.34 },
+      };
+
+      function cloneGlowUniforms(uniforms) {
+        return {
+          uCamPos: { value: uniforms.uCamPos.value.clone() },
+          uColor: { value: uniforms.uColor.value.clone() },
+          uOpacity: { value: uniforms.uOpacity.value },
+        };
+      }
+
+      const glowShellGeometry = new THREE.SphereGeometry(1.45, 96, 64);
+      const glowMat1 = new THREE.ShaderMaterial({
+        uniforms: cloneGlowUniforms(glowUniformTemplate),
+        vertexShader: glowVertexShader,
+        fragmentShader: glowFragmentShader,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.BackSide,
+      });
+      const glowMat2 = new THREE.ShaderMaterial({
+        uniforms: cloneGlowUniforms(glowUniformTemplate),
+        vertexShader: glowVertexShader,
+        fragmentShader: glowFragmentShader,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.BackSide,
+      });
+
+      const glow1 = new THREE.Mesh(glowShellGeometry, glowMat1);
+      const glow2 = new THREE.Mesh(glowShellGeometry, glowMat2);
+      glow2.material.uniforms.uColor.value.setRGB(0.68, 0.84, 1.0);
+      scene.add(glow1);
+      scene.add(glow2);
+
+      const remnant = new THREE.Mesh(
+        new THREE.SphereGeometry(0.34, 48, 48),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.92, 1.0), transparent: true, opacity: 0.95 })
+      );
+      remnant.visible = false;
+      scene.add(remnant);
+
+      const streamCount = 1100;
+      const streamPositions = new Float32Array(streamCount * 3);
+      const streamGeom = new THREE.BufferGeometry();
+      streamGeom.setAttribute("position", new THREE.BufferAttribute(streamPositions, 3));
+      const streamMat = new THREE.PointsMaterial({
+        color: new THREE.Color(1.0, 0.78, 0.55),
+        size: 0.08,
+        transparent: true,
+        opacity: 0.0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const streamPoints = new THREE.Points(streamGeom, streamMat);
+      streamPoints.visible = false;
+      scene.add(streamPoints);
+
+      const burstCount = 2600;
+      const burstPositions = new Float32Array(burstCount * 3);
+      const burstVel = new Float32Array(burstCount * 3);
+      const burstColor = new Float32Array(burstCount * 3);
+      const burstGeom = new THREE.BufferGeometry();
+      burstGeom.setAttribute("position", new THREE.BufferAttribute(burstPositions, 3));
+      burstGeom.setAttribute("color", new THREE.BufferAttribute(burstColor, 3));
+      const burstMat = new THREE.PointsMaterial({
+        size: 0.10,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const burstPoints = new THREE.Points(burstGeom, burstMat);
+      burstPoints.visible = false;
+      scene.add(burstPoints);
+
+      function initBurstDirections() {
+        for (let i = 0; i < burstCount; i++) {
+          const i3 = i * 3;
+          const u = Math.random();
+          const v = Math.random();
+          const theta = 2.0 * Math.PI * u;
+          const phi = Math.acos(2.0 * v - 1.0);
+          const dir = new THREE.Vector3(
+            Math.sin(phi) * Math.cos(theta),
+            Math.sin(phi) * Math.sin(theta),
+            Math.cos(phi)
+          );
+          const speed = 2.5 + Math.random() * 8.0 + Math.pow(Math.random(), 3.0) * 18.0;
+          burstVel[i3 + 0] = dir.x * speed;
+          burstVel[i3 + 1] = dir.y * speed;
+          burstVel[i3 + 2] = dir.z * speed;
+
+          const t = Math.random();
+          const r = 0.75 + 0.25 * t;
+          const g = 0.56 + 0.34 * (1.0 - t);
+          const b = 0.96;
+          burstColor[i3 + 0] = r;
+          burstColor[i3 + 1] = g;
+          burstColor[i3 + 2] = b;
+
+          burstPositions[i3 + 0] = 0;
+          burstPositions[i3 + 1] = 0;
+          burstPositions[i3 + 2] = 0;
+        }
+        burstGeom.attributes.position.needsUpdate = true;
+      }
+      initBurstDirections();
+
+      const starfieldCount = 2200;
+      const starfieldPositions = new Float32Array(starfieldCount * 3);
+      for (let i = 0; i < starfieldCount; i++) {
+        const i3 = i * 3;
+        const r = 80 + Math.random() * 240;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        starfieldPositions[i3 + 0] = r * Math.sin(phi) * Math.cos(theta);
+        starfieldPositions[i3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+        starfieldPositions[i3 + 2] = r * Math.cos(phi);
+      }
+      const starfield = new THREE.Points(
+        new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(starfieldPositions, 3)),
+        new THREE.PointsMaterial({ color: 0x9fb8ff, size: 0.8, sizeAttenuation: true, transparent: true, opacity: 0.8 })
+      );
+      scene.add(starfield);
+
+      const ambient = new THREE.AmbientLight(0xffffff, 0.25);
+      scene.add(ambient);
+
+      const ACT1_DURATION = 18.0;
+      const ACT2_DURATION = 1.0;
+      const ACT3_DURATION = 44.0;
+      const TOTAL_DURATION = ACT1_DURATION + ACT2_DURATION + ACT3_DURATION;
+
+      const params = {
+        timeScale: 1.0,
+        m1: 1.35,
+        m2: 1.30,
+        ejectaMass: 0.055,
+        polarVel: 0.30,
+        eqVel: 0.10,
+        opacityContrast: 1.35,
+        rtStrength: 1.1,
+        jetAngle: 12.0,
+        jetIntensity: 1.2,
+        remnantLum: 1.1,
+        bloomStrength: 1.25,
+        chromaticAberration: 0.2,
+        sharpen: 0.25,
+        autoQuality: true,
+        qualityTier: 0,
+      };
+
+      const state = {
+        playing: true,
+        simTime: 0,
+        act: 1,
+        actTime: 0,
+        act2Progress: 0,
+        act3Progress: 0,
+        physicalDays: 0.03,
+        collisionElapsed: 0,
+        fpsSmooth: 60,
+        adaptTimer: 0,
+        currentQualityTier: 0,
+      };
+
+      const tmpDir12 = new THREE.Vector3();
+      const tmpDir21 = new THREE.Vector3();
+      const tmpStreamDir = new THREE.Vector3();
+      const tmpStreamSide = new THREE.Vector3();
+      const tmpStreamUp = new THREE.Vector3();
+      const origin = new THREE.Vector3(0, 0, 0);
+
+      const qualityProfiles = [
+        { name: "Ultra", steps: 96, octaves: 4, pixelRatio: Math.min(window.devicePixelRatio, 1.5), bloomRadius: 0.30 },
+        { name: "High", steps: 78, octaves: 3, pixelRatio: Math.min(window.devicePixelRatio, 1.2), bloomRadius: 0.28 },
+        { name: "Medium", steps: 62, octaves: 2, pixelRatio: Math.min(window.devicePixelRatio, 1.0), bloomRadius: 0.26 },
+        { name: "Low", steps: 46, octaves: 1, pixelRatio: 0.85, bloomRadius: 0.24 },
+      ];
+
+      function smoothstep(edge0, edge1, x) {
+        const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+        return t * t * (3 - 2 * t);
+      }
+
+      function clamp(x, a, b) {
+        return Math.min(Math.max(x, a), b);
+      }
+
+      function mapExp01(x, minVal, maxVal) {
+        const logMin = Math.log(minVal);
+        const logMax = Math.log(maxVal);
+        return Math.exp(logMin + (logMax - logMin) * x);
+      }
+
+      function setQualityTier(tier, force = false) {
+        const next = clamp(Math.round(tier), 0, qualityProfiles.length - 1);
+        if (!force && next === state.currentQualityTier) {
+          return;
+        }
+
+        state.currentQualityTier = next;
+        params.qualityTier = next;
+        const profile = qualityProfiles[next];
+        renderer.setPixelRatio(profile.pixelRatio);
+        onResize();
+
+        postMaterial.uniforms.uSteps.value = Number(profile.steps);
+        postMaterial.uniforms.uNoiseOctaves.value = Number(profile.octaves);
+
+        const qEl = document.getElementById("qualityTier");
+        qEl.value = String(next);
+        document.getElementById("qualityTierValue").textContent = `${next} (${profile.name})`;
+      }
+
+      function bindSlider(id, key, formatter) {
+        const el = document.getElementById(id);
+        const valueEl = document.getElementById(`${id}Value`);
+        el.value = String(params[key]);
+        valueEl.textContent = formatter(params[key]);
+        el.addEventListener("input", () => {
+          params[key] = parseFloat(el.value);
+          valueEl.textContent = formatter(params[key]);
+        });
+      }
+
+      bindSlider("m1", "m1", (v) => v.toFixed(2));
+      bindSlider("m2", "m2", (v) => v.toFixed(2));
+      bindSlider("ejectaMass", "ejectaMass", (v) => v.toFixed(3));
+      bindSlider("polarVel", "polarVel", (v) => v.toFixed(3));
+      bindSlider("eqVel", "eqVel", (v) => v.toFixed(3));
+      bindSlider("opacityContrast", "opacityContrast", (v) => v.toFixed(2));
+      bindSlider("rtStrength", "rtStrength", (v) => v.toFixed(2));
+      bindSlider("jetAngle", "jetAngle", (v) => `${v.toFixed(1)} deg`);
+      bindSlider("jetIntensity", "jetIntensity", (v) => v.toFixed(2));
+      bindSlider("remnantLum", "remnantLum", (v) => v.toFixed(2));
+      bindSlider("bloomStrength", "bloomStrength", (v) => v.toFixed(2));
+      bindSlider("chromaticAberration", "chromaticAberration", (v) => v.toFixed(2));
+      bindSlider("sharpen", "sharpen", (v) => v.toFixed(2));
+
+      const timelineEl = document.getElementById("timeline");
+      const timelineValueEl = document.getElementById("timelineValue");
+      const timeScaleEl = document.getElementById("timeScale");
+      const timeScaleValueEl = document.getElementById("timeScaleValue");
+      const uiPanel = document.getElementById("ui");
+      const settingsToggleBtn = document.getElementById("settingsToggle");
+      const hudAct = document.getElementById("hudAct");
+      const hudSim = document.getElementById("hudSim");
+      const hudPhys = document.getElementById("hudPhys");
+      const hudFPS = document.getElementById("hudFPS");
+      const hudQuality = document.getElementById("hudQuality");
+      const hudSteps = document.getElementById("hudSteps");
+
+      let panelCollapsed = false;
+
+      function setPanelCollapsed(collapsed) {
+        panelCollapsed = collapsed;
+        uiPanel.classList.toggle("collapsed", collapsed);
+        settingsToggleBtn.textContent = collapsed ? "Settings ⚙" : "Hide Settings ⚙";
+        settingsToggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      }
+
+      settingsToggleBtn.addEventListener("click", () => {
+        setPanelCollapsed(!panelCollapsed);
+      });
+      setPanelCollapsed(false);
+
+      timeScaleEl.value = String(params.timeScale);
+      timeScaleValueEl.textContent = `${params.timeScale.toFixed(2)}x`;
+      timeScaleEl.addEventListener("input", () => {
+        params.timeScale = parseFloat(timeScaleEl.value);
+        timeScaleValueEl.textContent = `${params.timeScale.toFixed(2)}x`;
+      });
+
+      timelineEl.addEventListener("input", () => {
+        state.simTime = (parseFloat(timelineEl.value) / 1000) * TOTAL_DURATION;
+      });
+
+      const playPauseBtn = document.getElementById("playPause");
+      const restartBtn = document.getElementById("restart");
+
+      playPauseBtn.addEventListener("click", () => {
+        state.playing = !state.playing;
+        playPauseBtn.textContent = state.playing ? "Pause" : "Play";
+      });
+
+      restartBtn.addEventListener("click", () => {
+        state.simTime = 0;
+        state.playing = true;
+        playPauseBtn.textContent = "Pause";
+      });
+
+      const autoQualityEl = document.getElementById("autoQuality");
+      const autoQualityValueEl = document.getElementById("autoQualityValue");
+      const manualQualityEl = document.getElementById("qualityTier");
+
+      function refreshQualityControls() {
+        manualQualityEl.disabled = params.autoQuality;
+      }
+
+      autoQualityEl.checked = params.autoQuality;
+      autoQualityEl.addEventListener("change", () => {
+        params.autoQuality = autoQualityEl.checked;
+        autoQualityValueEl.textContent = params.autoQuality ? "On" : "Off";
+        refreshQualityControls();
+        if (!params.autoQuality) {
+          setQualityTier(parseInt(manualQualityEl.value, 10), true);
+        }
+      });
+
+      manualQualityEl.value = String(params.qualityTier);
+      manualQualityEl.addEventListener("input", () => {
+        const tier = parseInt(manualQualityEl.value, 10);
+        if (!params.autoQuality) {
+          setQualityTier(tier, true);
+        }
+      });
+      refreshQualityControls();
+
+      const presetMap = {
+        wide: {
+          pos: new THREE.Vector3(0, 2.8, 14.8),
+          target: new THREE.Vector3(0, 0, 0),
+        },
+        orbital: {
+          pos: new THREE.Vector3(12.5, 3.6, 10.2),
+          target: new THREE.Vector3(0, 0.3, 0),
+        },
+        polar: {
+          pos: new THREE.Vector3(0.2, 18, 2.4),
+          target: new THREE.Vector3(0, 0, 0),
+        },
+        equatorial: {
+          pos: new THREE.Vector3(16.0, 1.1, 0.2),
+          target: new THREE.Vector3(0, 0, 0),
+        },
+      };
+
+      function applyPreset(name) {
+        const preset = presetMap[name];
+        if (!preset) {
+          return;
+        }
+        camera.position.copy(preset.pos);
+        controls.target.copy(preset.target);
+        controls.update();
+      }
+
+      document.querySelectorAll("button[data-preset]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          applyPreset(btn.dataset.preset);
+        });
+      });
+
+      function updateBurst(collisionTime, totalMassScale) {
+        const fade = Math.exp(-collisionTime * 0.6);
+        burstMat.opacity = clamp(1.5 * fade, 0, 1.0);
+        burstPoints.visible = burstMat.opacity > 0.01;
+
+        for (let i = 0; i < burstCount; i++) {
+          const i3 = i * 3;
+          const vx = burstVel[i3 + 0] * totalMassScale;
+          const vy = burstVel[i3 + 1] * totalMassScale;
+          const vz = burstVel[i3 + 2] * totalMassScale;
+
+          const drag = 1.0 / (1.0 + collisionTime * 0.15);
+          burstPositions[i3 + 0] = vx * collisionTime * drag;
+          burstPositions[i3 + 1] = vy * collisionTime * drag;
+          burstPositions[i3 + 2] = vz * collisionTime * drag;
+        }
+        burstGeom.attributes.position.needsUpdate = true;
+      }
+
+      function updateStreams(progress, elapsed) {
+        const strength = smoothstep(0.63, 1.0, progress);
+        streamPoints.visible = strength > 0.02;
+        streamMat.opacity = 0.08 + strength * 0.5;
+        streamMat.size = 0.05 + strength * 0.18;
+
+        if (strength <= 0.02) {
+          return;
+        }
+
+        tmpStreamDir.subVectors(star2.position, star1.position).normalize();
+        tmpStreamSide.set(0, 0, 1).cross(tmpStreamDir).normalize();
+        tmpStreamUp.crossVectors(tmpStreamDir, tmpStreamSide).normalize();
+
+        const x1 = star1.position.x;
+        const y1 = star1.position.y;
+        const z1 = star1.position.z;
+        const dx = star2.position.x - x1;
+        const dy = star2.position.y - y1;
+        const dz = star2.position.z - z1;
+
+        for (let i = 0; i < streamCount; i++) {
+          const i3 = i * 3;
+          const t = i / (streamCount - 1);
+          const baseX = x1 + dx * t;
+          const baseY = y1 + dy * t;
+          const baseZ = z1 + dz * t;
+          const curl = Math.sin(t * 44.0 + elapsed * 9.0 + i * 0.013) * (0.07 + 0.33 * strength);
+          const wobble = Math.cos(t * 37.0 - elapsed * 7.0 + i * 0.02) * (0.05 + 0.24 * strength);
+          streamPositions[i3 + 0] = baseX + tmpStreamSide.x * curl + tmpStreamUp.x * wobble;
+          streamPositions[i3 + 1] = baseY + tmpStreamSide.y * curl + tmpStreamUp.y * wobble;
+          streamPositions[i3 + 2] = baseZ + tmpStreamSide.z * curl + tmpStreamUp.z * wobble;
+        }
+
+        streamGeom.attributes.position.needsUpdate = true;
+      }
+
+      function updateInspiral(elapsed, actTime) {
+        const p = clamp(actTime / ACT1_DURATION, 0, 1);
+        const m1 = params.m1;
+        const m2 = params.m2;
+        const mTotal = m1 + m2;
+        const mScale = clamp(mTotal / 2.8, 0.72, 1.7);
+
+        const chirpBoost = Math.pow(Math.max(0.04, 1.0 - 0.965 * p), -0.375);
+        const phase = 2.0 * Math.PI * (2.0 * p + 5.6 * p * p + 18.0 * Math.pow(p, 4.0)) * mScale;
+
+        const sep = clamp(7.8 - 6.0 * Math.pow(p, 0.76), 2.08, 8.0);
+        const r1 = sep * (m2 / mTotal);
+        const r2 = sep * (m1 / mTotal);
+
+        const c = Math.cos(phase);
+        const s = Math.sin(phase);
+        star1.position.set(c * r1, s * r1, 0.07 * Math.sin(phase * 0.55));
+        star2.position.set(-c * r2, -s * r2, -0.07 * Math.sin(phase * 0.55));
+        star1.scale.setScalar(1);
+        star2.scale.setScalar(1);
+
+        glow1.position.copy(star1.position);
+        glow2.position.copy(star2.position);
+
+        const tidal = Math.pow(smoothstep(0.60, 1.0, p), 1.35) * 0.58;
+        tmpDir12.subVectors(star2.position, star1.position).normalize();
+        tmpDir21.copy(tmpDir12).multiplyScalar(-1);
+
+        starMat1.uniforms.uDeform.value = tidal;
+        starMat2.uniforms.uDeform.value = tidal;
+        starMat1.uniforms.uDeformDir.value.copy(tmpDir12);
+        starMat2.uniforms.uDeformDir.value.copy(tmpDir21);
+
+        const temp = clamp(0.35 + 0.58 * smoothstep(0.18, 1.0, p), 0.0, 1.0);
+        const intensity = 0.92 + 0.55 * smoothstep(0.2, 1.0, p) + 0.05 * chirpBoost;
+        starMat1.uniforms.uTemp.value = temp;
+        starMat2.uniforms.uTemp.value = temp * 0.96;
+        starMat1.uniforms.uIntensity.value = intensity;
+        starMat2.uniforms.uIntensity.value = intensity * 0.98;
+        starMat1.uniforms.uTime.value = elapsed;
+        starMat2.uniforms.uTime.value = elapsed + 0.35;
+        starMat1.uniforms.uCamPos.value.copy(camera.position);
+        starMat2.uniforms.uCamPos.value.copy(camera.position);
+        glowMat1.uniforms.uCamPos.value.copy(camera.position);
+        glowMat2.uniforms.uCamPos.value.copy(camera.position);
+        glowMat1.uniforms.uOpacity.value = 0.28 + 0.22 * smoothstep(0.0, 1.0, p);
+        glowMat2.uniforms.uOpacity.value = glowMat1.uniforms.uOpacity.value;
+
+        star1.visible = true;
+        star2.visible = true;
+        glow1.visible = true;
+        glow2.visible = true;
+        remnant.visible = false;
+
+        updateStreams(p, elapsed);
+
+        burstMat.opacity = 0.0;
+        burstPoints.visible = false;
+      }
+
+      function updateCollision(elapsed, actTime, massScale) {
+        const p = clamp(actTime / ACT2_DURATION, 0, 1);
+
+        star1.visible = p < 0.65;
+        star2.visible = p < 0.65;
+        glow1.visible = p < 0.65;
+        glow2.visible = p < 0.65;
+
+        const collapse = 1.0 - smoothstep(0.0, 1.0, p);
+        star1.scale.setScalar(0.6 + 0.4 * collapse);
+        star2.scale.setScalar(0.6 + 0.4 * collapse);
+
+        star1.position.lerp(origin, 0.14 + p * 0.2);
+        star2.position.lerp(origin, 0.14 + p * 0.2);
+        glow1.position.copy(star1.position);
+        glow2.position.copy(star2.position);
+        glowMat1.uniforms.uCamPos.value.copy(camera.position);
+        glowMat2.uniforms.uCamPos.value.copy(camera.position);
+        glowMat1.uniforms.uOpacity.value = 0.22 * (1.0 - p);
+        glowMat2.uniforms.uOpacity.value = glowMat1.uniforms.uOpacity.value;
+
+        streamPoints.visible = false;
+
+        remnant.visible = true;
+        remnant.position.set(0, 0, 0);
+        const pulse = 1.0 + 0.25 * Math.sin(elapsed * 14.0);
+        remnant.scale.setScalar((0.85 + 0.55 * (1.0 - p)) * pulse);
+
+        updateBurst(actTime, massScale);
+      }
+
+      function updateExpansion(elapsed, actTime, massScale) {
+        const p = clamp(actTime / ACT3_DURATION, 0, 1);
+
+        star1.visible = false;
+        star2.visible = false;
+        glow1.visible = false;
+        glow2.visible = false;
+        streamPoints.visible = false;
+
+        remnant.visible = true;
+        remnant.position.set(0, 0, 0);
+        remnant.scale.setScalar(0.78 + 0.12 * Math.sin(elapsed * 8.0));
+        remnant.material.opacity = 0.92;
+
+        updateBurst(ACT2_DURATION + actTime, massScale);
+
+        state.act3Progress = p;
+        state.physicalDays = mapExp01(Math.pow(p, 1.15), 0.03, 21.0);
+      }
+
+      function updateTimeline(delta) {
+        if (state.playing) {
+          state.simTime += delta * params.timeScale;
+          while (state.simTime >= TOTAL_DURATION) {
+            state.simTime -= TOTAL_DURATION;
+          }
+          if (state.simTime < 0) {
+            state.simTime = 0;
+          }
+        }
+
+        timelineEl.value = String(Math.round((state.simTime / TOTAL_DURATION) * 1000));
+        timelineValueEl.textContent = `${state.simTime.toFixed(2)} s`;
+
+        if (state.simTime < ACT1_DURATION) {
+          state.act = 1;
+          state.actTime = state.simTime;
+          state.act2Progress = 0;
+          state.act3Progress = 0;
+          state.physicalDays = 0.03;
+        } else if (state.simTime < ACT1_DURATION + ACT2_DURATION) {
+          state.act = 2;
+          state.actTime = state.simTime - ACT1_DURATION;
+          state.act2Progress = clamp(state.actTime / ACT2_DURATION, 0, 1);
+          state.act3Progress = 0;
+          state.physicalDays = 0.03;
+        } else {
+          state.act = 3;
+          state.actTime = state.simTime - ACT1_DURATION - ACT2_DURATION;
+          state.act2Progress = 1.0;
+        }
+      }
+
+      function updatePerformance(delta) {
+        const fps = 1.0 / Math.max(delta, 1e-4);
+        state.fpsSmooth = THREE.MathUtils.lerp(state.fpsSmooth, fps, 0.06);
+
+        if (!params.autoQuality) {
+          return;
+        }
+
+        state.adaptTimer += delta;
+        if (state.adaptTimer < 1.2) {
+          return;
+        }
+
+        state.adaptTimer = 0;
+
+        if (state.fpsSmooth < 50 && state.currentQualityTier < qualityProfiles.length - 1) {
+          setQualityTier(state.currentQualityTier + 1, true);
+        } else if (state.fpsSmooth > 57 && state.currentQualityTier > 0) {
+          setQualityTier(state.currentQualityTier - 1, true);
+        }
+      }
+
+      function updateAct(elapsed) {
+        const totalMass = params.m1 + params.m2;
+        const massScale = clamp(Math.pow(totalMass / 2.8, 0.70), 0.70, 1.65);
+        const actLabel = state.act === 1 ? "Inspiral" : state.act === 2 ? "Collision" : "Kilonova Expansion";
+        const qualityProfile = qualityProfiles[state.currentQualityTier];
+
+        if (state.act === 1) {
+          updateInspiral(elapsed, state.actTime);
+        } else if (state.act === 2) {
+          updateCollision(elapsed, state.actTime, massScale);
+        } else {
+          updateExpansion(elapsed, state.actTime, massScale);
+        }
+
+        const flash = state.act === 2 ? Math.exp(-state.act2Progress * 7.5) * (2.2 * massScale) : 0.0;
+        renderer.toneMappingExposure = 1.0 + flash * 0.45;
+
+        postMaterial.uniforms.uCamPos.value.copy(camera.position);
+        postMaterial.uniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
+        postMaterial.uniforms.uInvView.value.copy(camera.matrixWorld);
+        postMaterial.uniforms.uTime.value = elapsed;
+        postMaterial.uniforms.uAct.value = state.act;
+        postMaterial.uniforms.uAct2Progress.value = state.act2Progress;
+        postMaterial.uniforms.uAct3Progress.value = state.act3Progress;
+        postMaterial.uniforms.uDays.value = state.physicalDays;
+        postMaterial.uniforms.uCollisionFlash.value = flash;
+        postMaterial.uniforms.uEnergyScale.value = massScale;
+        postMaterial.uniforms.uEjectaMass.value = params.ejectaMass;
+        postMaterial.uniforms.uPolarVel.value = params.polarVel;
+        postMaterial.uniforms.uEqVel.value = params.eqVel;
+        postMaterial.uniforms.uOpacityContrast.value = params.opacityContrast;
+        postMaterial.uniforms.uRTStrength.value = params.rtStrength;
+        postMaterial.uniforms.uJetAngle.value = params.jetAngle;
+        postMaterial.uniforms.uJetIntensity.value = params.jetIntensity;
+        postMaterial.uniforms.uRemnantLum.value = params.remnantLum;
+        postMaterial.uniforms.uBloomStrength.value = params.bloomStrength;
+        postMaterial.uniforms.uChromAb.value = params.chromaticAberration;
+        postMaterial.uniforms.uSharpen.value = params.sharpen;
+
+        hudAct.textContent = `Current Act: Act ${state.act} - ${actLabel}`;
+        hudSim.textContent = `Simulation Time: t = ${state.simTime.toFixed(1)}s / ${TOTAL_DURATION.toFixed(1)}s`;
+        if (state.act === 3) {
+          hudPhys.textContent = `Physical Time: ~${state.physicalDays.toFixed(1)} days post-merger`;
+        } else if (state.act === 2) {
+          hudPhys.textContent = "Physical Time: contact to milliseconds post-merger";
+        } else {
+          hudPhys.textContent = "Physical Time: pre-merger inspiral";
+        }
+        hudFPS.textContent = `FPS (smoothed): ${state.fpsSmooth.toFixed(1)}`;
+        hudQuality.textContent = `Render Quality Tier: ${qualityProfile.name}`;
+        hudSteps.textContent = `Ray March Steps: ${Math.round(postMaterial.uniforms.uSteps.value)}`;
+      }
+
+      function onResize() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+        baseTarget.setSize(w, h);
+        postMaterial.uniforms.uResolution.value.set(w, h);
+      }
+
+      window.addEventListener("resize", onResize);
+
+      setQualityTier(0, true);
+      applyPreset("wide");
+
+      const clock = new THREE.Clock();
+      let prevTime = performance.now() * 0.001;
+
+      function animate() {
+        requestAnimationFrame(animate);
+
+        const now = performance.now() * 0.001;
+        const delta = Math.min(0.05, now - prevTime);
+        prevTime = now;
+
+        updateTimeline(delta);
+        updatePerformance(delta);
+
+        if (!params.autoQuality && state.currentQualityTier !== params.qualityTier) {
+          setQualityTier(params.qualityTier, true);
+        }
+
+        controls.update();
+
+        const elapsed = clock.getElapsedTime();
+        updateAct(elapsed);
+
+        if (state.act === 1) {
+          renderer.setRenderTarget(null);
+          renderer.clear();
+          renderer.render(scene, camera);
+        } else {
+          renderer.setRenderTarget(baseTarget);
+          renderer.clear();
+          renderer.render(scene, camera);
+          renderer.setRenderTarget(null);
+          renderer.clear();
+          renderer.render(postScene, postCamera);
+        }
+      }
+
+      animate();
+    </script>
+  </body>
+</html>
