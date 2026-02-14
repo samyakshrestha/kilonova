@@ -835,10 +835,20 @@
             return invL5 / max(exp(min(x, 60.0)) - 1.0, 1e-6);
           }
 
+          vec3 xyzToLinearSRGB(vec3 xyz) {
+            vec3 rgb;
+            rgb.r = 3.2406 * xyz.x - 1.5372 * xyz.y - 0.4986 * xyz.z;
+            rgb.g = -0.9689 * xyz.x + 1.8758 * xyz.y + 0.0415 * xyz.z;
+            rgb.b = 0.0557 * xyz.x - 0.2040 * xyz.y + 1.0570 * xyz.z;
+            return max(rgb, vec3(0.0));
+          }
+
           vec3 pseudoSpectralColor(float tempK, float tauRef, float yE, float recombFrac) {
             float lanth = clamp((0.30 - yE) / 0.16, 0.0, 1.0);
             float ionized = 1.0 - clamp(recombFrac, 0.0, 1.0);
             float tau0 = max(tauRef, 0.0) * (0.66 + 1.30 * lanth) * (1.0 + 0.40 * recombFrac);
+            float recombKink = smoothstep(0.28, 0.92, recombFrac);
+            float lanthKink = recombKink * (0.35 + 0.65 * lanth);
 
             // 7-band transport surrogate (UV to NIR) for smoother color evolution.
             float b1 = planckBand(tempK, 340.0);
@@ -856,6 +866,15 @@
             float k5 = (0.78 + 0.17 * lanth) * (0.92 + 0.08 * ionized);
             float k6 = (0.62 + 0.12 * lanth) * (0.90 + 0.10 * ionized);
             float k7 = (0.48 + 0.09 * lanth) * (0.88 + 0.12 * ionized);
+
+            // Recombination-driven line blanketing increase: sharp blue suppression, softer NIR response.
+            k1 *= 1.0 + 0.62 * lanthKink;
+            k2 *= 1.0 + 0.52 * lanthKink;
+            k3 *= 1.0 + 0.38 * lanthKink;
+            k4 *= 1.0 + 0.24 * lanthKink;
+            k5 *= 1.0 + 0.08 * lanthKink;
+            k6 *= max(0.28, 1.0 - 0.10 * lanthKink);
+            k7 *= max(0.26, 1.0 - 0.14 * lanthKink);
 
             float t1 = exp(-tau0 * k1);
             float t2 = exp(-tau0 * k2);
@@ -879,12 +898,44 @@
             f6 += absorbedBlue * (0.18 + 0.24 * lineRedistrib);
             f7 += absorbedBlue * (0.11 + 0.30 * lineRedistrib);
 
-            vec3 rgb;
-            rgb.r = 0.02 * f1 + 0.08 * f2 + 0.24 * f3 + 0.54 * f4 + 1.08 * f5 + 0.78 * f6 + 0.44 * f7;
-            rgb.g = 0.06 * f1 + 0.70 * f2 + 1.05 * f3 + 0.88 * f4 + 0.30 * f5 + 0.09 * f6 + 0.03 * f7;
-            rgb.b = 1.04 * f1 + 1.18 * f2 + 0.66 * f3 + 0.18 * f4 + 0.03 * f5 + 0.01 * f6 + 0.00 * f7;
+            // Approximate 7-band -> CIE XYZ integration (band centers in nm: 340,410,480,560,650,780,980).
+            // UV/NIR bands are visibility-weighted down for display-space realism.
+            float v1 = 0.14;
+            float v2 = 1.00;
+            float v3 = 1.00;
+            float v4 = 1.00;
+            float v5 = 1.00;
+            float v6 = 0.22;
+            float v7 = 0.03;
 
-            float lum = max(dot(rgb, vec3(0.2126, 0.7152, 0.0722)), 1e-6);
+            float X =
+              v1 * f1 * 0.0032 +
+              v2 * f2 * 0.0435 +
+              v3 * f3 * 0.0956 +
+              v4 * f4 * 0.5945 +
+              v5 * f5 * 0.2835 +
+              v6 * f6 * 0.0001 +
+              v7 * f7 * 0.0000;
+            float Y =
+              v1 * f1 * 0.0001 +
+              v2 * f2 * 0.0012 +
+              v3 * f3 * 0.1390 +
+              v4 * f4 * 0.9950 +
+              v5 * f5 * 0.1070 +
+              v6 * f6 * 0.0000 +
+              v7 * f7 * 0.0000;
+            float Z =
+              v1 * f1 * 0.0138 +
+              v2 * f2 * 0.2074 +
+              v3 * f3 * 0.8130 +
+              v4 * f4 * 0.0039 +
+              v5 * f5 * 0.0000 +
+              v6 * f6 * 0.0000 +
+              v7 * f7 * 0.0000;
+
+            vec3 rgb = xyzToLinearSRGB(vec3(X, Y, Z));
+
+            float lum = max(Y, 1e-6);
             rgb /= lum;
             float sat = mix(0.90, 1.10, smoothstep(2200.0, 9200.0, tempK));
             rgb = mix(vec3(1.0), rgb, sat);
@@ -909,12 +960,12 @@
             float lateNir = smoothstep(0.9, 6.8, tDay);
             float blanketing = 1.0 - exp(-max(tauRef, 0.0) * (0.35 + 0.55 * lanth));
             vec3 tintBlue = vec3(0.94, 1.06, 1.26);
-            vec3 tintMid = vec3(1.00, 0.79, 1.13);
+            vec3 tintMid = vec3(1.03, 0.90, 0.99);
             vec3 tintLate = vec3(1.20, 0.74, 0.46);
             vec3 tint = vec3(1.0);
             tint *= mix(vec3(1.0), tintBlue, 0.22 * earlyBlue * (0.62 + 0.38 * ionized));
-            tint *= mix(vec3(1.0), tintMid, 0.24 * midLine * (0.40 + 0.60 * blanketing));
-            tint *= mix(vec3(1.0), tintLate, 0.36 * lateNir * (0.36 + 0.64 * lanth) * (0.42 + 0.58 * recomb));
+            tint *= mix(vec3(1.0), tintMid, 0.14 * midLine * (0.40 + 0.60 * blanketing));
+            tint *= mix(vec3(1.0), tintLate, 0.40 * lateNir * (0.36 + 0.64 * lanth) * (0.42 + 0.58 * recomb));
             return tint;
           }
 
@@ -1017,15 +1068,15 @@
                 float jetPersist = uAct < 2.5 ? 1.0 : (0.82 + 0.18 * exp(-evo * 2.6));
                 float jetStrength = uJetIntensity * jetLaunch * jetPersist * (1.20 + 0.55 * collisionCore);
 
-                float phaseBlueNear = 1.0 - smoothstep(0.06, 1.6, tDays);
-                float phasePurpleNear = smoothstep(0.05, 0.9, tDays) * (1.0 - smoothstep(2.2, 5.8, tDays));
-                float phaseRedNear = smoothstep(0.5, 8.5, tDays);
+                float phaseBlueNear = 1.0 - smoothstep(0.05, 1.25, tDays);
+                float phasePurpleNear = 0.55 * smoothstep(0.08, 0.55, tDays) * (1.0 - smoothstep(1.4, 3.4, tDays));
+                float phaseRedNear = smoothstep(0.30, 6.0, tDays);
                 float phaseCloudEarlyNear = smoothstep(0.03, 0.16, tDays) * (1.0 - smoothstep(0.9, 3.2, tDays));
                 float phaseNebulaNear = smoothstep(0.10, 1.8, tDays) * (0.60 + 0.40 * smoothstep(0.22, 0.75, evo));
 
-                float phaseBlueFar = 1.0 - smoothstep(0.06, 1.6, tDaysFar);
-                float phasePurpleFar = smoothstep(0.05, 0.9, tDaysFar) * (1.0 - smoothstep(2.2, 5.8, tDaysFar));
-                float phaseRedFar = smoothstep(0.5, 8.5, tDaysFar);
+                float phaseBlueFar = 1.0 - smoothstep(0.05, 1.25, tDaysFar);
+                float phasePurpleFar = 0.55 * smoothstep(0.08, 0.55, tDaysFar) * (1.0 - smoothstep(1.4, 3.4, tDaysFar));
+                float phaseRedFar = smoothstep(0.30, 6.0, tDaysFar);
                 float phaseCloudEarlyFar = smoothstep(0.03, 0.16, tDaysFar) * (1.0 - smoothstep(0.9, 3.2, tDaysFar));
                 float phaseNebulaFar = smoothstep(0.10, 1.8, tDaysFar) * (0.60 + 0.40 * smoothstep(0.22, 0.75, evo));
 
@@ -1045,6 +1096,12 @@
                 float TphotoFar = mix(TpolarFar, TeqFar, 0.58);
                 float TagNear = mix(TpolarNear + 3000.0, TcocoonNear + 2200.0, 0.55);
                 float TagFar = mix(TpolarFar + 3000.0, TcocoonFar + 2200.0, 0.55);
+                float recombEqKinkNear = 1.0 - smoothstep(2800.0, 4300.0, TeqNear);
+                float recombEqKinkFar = 1.0 - smoothstep(2800.0, 4300.0, TeqFar);
+                phaseRedNear = clamp(phaseRedNear + 0.20 * recombEqKinkNear * (0.35 + 0.65 * lanthEqNear), 0.0, 1.0);
+                phaseRedFar = clamp(phaseRedFar + 0.20 * recombEqKinkFar * (0.35 + 0.65 * lanthEqFar), 0.0, 1.0);
+                phaseBlueNear = clamp(phaseBlueNear * (1.0 - 0.14 * recombEqKinkNear * lanthEqNear), 0.0, 1.0);
+                phaseBlueFar = clamp(phaseBlueFar * (1.0 - 0.14 * recombEqKinkFar * lanthEqFar), 0.0, 1.0);
 
                 float LpolarNear = massPolar * pow(tDays, -1.3) * thermalizationEff(tDays, 0.9);
                 float LeqNear = massEq * pow(tDays, -1.3) * thermalizationEff(tDays, 1.8);
@@ -1058,24 +1115,24 @@
                 float eqBlanketViewFar = 1.0 + 0.46 * viewEqSight * lanthEqFar;
                 float wBlueNear = clamp((LpolarNear / LsumNear) * exp(-(0.12 + 0.20 * lanthPolarNear) * tauPolarNear * eqBlanketViewNear), 0.0, 1.0);
                 float wRedNear = clamp((LeqNear / LsumNear) * (1.0 - exp(-(0.06 + 0.18 * lanthEqNear) * tauEqNear * (0.90 + 0.25 * viewEqSight))) + 0.10 * (LcocoonNear / LsumNear) * (0.55 + 0.45 * lanthCocoonNear), 0.0, 1.0);
-                float wPurpleNear = clamp((LcocoonNear / LsumNear) * exp(-(0.05 + 0.12 * lanthCocoonNear) * tauCocoonNear) + 0.48 * sqrt(max(wBlueNear * wRedNear, 0.0)), 0.0, 1.0);
+                float wPurpleNear = clamp(0.42 * (LcocoonNear / LsumNear) * exp(-(0.05 + 0.12 * lanthCocoonNear) * tauCocoonNear) + 0.16 * sqrt(max(wBlueNear * wRedNear, 0.0)), 0.0, 1.0);
                 float wNormNear = max(wBlueNear + wPurpleNear + wRedNear, 1e-4);
                 wBlueNear /= wNormNear;
                 wPurpleNear /= wNormNear;
                 wRedNear /= wNormNear;
                 float wBlueFar = clamp((LpolarFar / LsumFar) * exp(-(0.12 + 0.20 * lanthPolarFar) * tauPolarFar * eqBlanketViewFar), 0.0, 1.0);
                 float wRedFar = clamp((LeqFar / LsumFar) * (1.0 - exp(-(0.06 + 0.18 * lanthEqFar) * tauEqFar * (0.90 + 0.25 * viewEqSight))) + 0.10 * (LcocoonFar / LsumFar) * (0.55 + 0.45 * lanthCocoonFar), 0.0, 1.0);
-                float wPurpleFar = clamp((LcocoonFar / LsumFar) * exp(-(0.05 + 0.12 * lanthCocoonFar) * tauCocoonFar) + 0.48 * sqrt(max(wBlueFar * wRedFar, 0.0)), 0.0, 1.0);
+                float wPurpleFar = clamp(0.42 * (LcocoonFar / LsumFar) * exp(-(0.05 + 0.12 * lanthCocoonFar) * tauCocoonFar) + 0.16 * sqrt(max(wBlueFar * wRedFar, 0.0)), 0.0, 1.0);
                 float wNormFar = max(wBlueFar + wPurpleFar + wRedFar, 1e-4);
                 wBlueFar /= wNormFar;
                 wPurpleFar /= wNormFar;
                 wRedFar /= wNormFar;
-                phaseBlueNear = mix(phaseBlueNear, wBlueNear, 0.84);
-                phasePurpleNear = mix(phasePurpleNear, wPurpleNear, 0.84);
-                phaseRedNear = mix(phaseRedNear, wRedNear, 0.84);
-                phaseBlueFar = mix(phaseBlueFar, wBlueFar, 0.84);
-                phasePurpleFar = mix(phasePurpleFar, wPurpleFar, 0.84);
-                phaseRedFar = mix(phaseRedFar, wRedFar, 0.84);
+                phaseBlueNear = mix(phaseBlueNear, wBlueNear, 0.86);
+                phasePurpleNear = mix(phasePurpleNear, wPurpleNear, 0.48);
+                phaseRedNear = mix(phaseRedNear, wRedNear, 0.90);
+                phaseBlueFar = mix(phaseBlueFar, wBlueFar, 0.86);
+                phasePurpleFar = mix(phasePurpleFar, wPurpleFar, 0.48);
+                phaseRedFar = mix(phaseRedFar, wRedFar, 0.90);
                 float pSumNear = max(phaseBlueNear + phasePurpleNear + phaseRedNear, 1e-4);
                 phaseBlueNear /= pSumNear;
                 phasePurpleNear /= pSumNear;
@@ -1084,8 +1141,8 @@
                 phaseBlueFar /= pSumFar;
                 phasePurpleFar /= pSumFar;
                 phaseRedFar /= pSumFar;
-                phaseCloudEarlyNear *= 0.55 + 0.45 * phasePurpleNear;
-                phaseCloudEarlyFar *= 0.55 + 0.45 * phasePurpleFar;
+                phaseCloudEarlyNear *= 0.72 + 0.24 * phaseBlueNear + 0.04 * phasePurpleNear;
+                phaseCloudEarlyFar *= 0.72 + 0.24 * phaseBlueFar + 0.04 * phasePurpleFar;
                 phaseNebulaNear *= 0.74 + 0.26 * phaseRedNear;
                 phaseNebulaFar *= 0.74 + 0.26 * phaseRedFar;
                 float heatNormNear = clamp(0.08 + 1.45 * pow(LsumNear, 0.72), 0.06, 1.22);
@@ -1122,13 +1179,13 @@
                 vec3 eqWarmNear = mix(vec3(0.98, 0.62, 0.41), vec3(0.92, 0.56, 0.33), phaseRedNear);
                 vec3 colPolarNear = mix(bbPolarNear, vec3(0.70, 0.92, 1.34), 0.18 * phaseBlueNear);
                 vec3 colEqNear = mix(bbEqNear, eqWarmNear, 0.20 + 0.50 * phaseRedNear + 0.14 * lanthEqNear);
-                colEqNear = mix(colEqNear, vec3(0.88, 0.64, 1.10), 0.22 * phasePurpleNear * (1.0 - phaseRedNear));
-                vec3 colRSNear = mix(kelvinToRGB(9000.0 + 2600.0 * phaseBlueNear), vec3(1.0, 0.66, 0.82), 0.24 + 0.24 * phasePurpleNear);
-                vec3 colRTNear = mix(vec3(0.90, 0.64, 1.04), vec3(1.00, 0.56, 0.31), smoothstep(0.45, 1.0, evo));
-                vec3 colCocoonNear = mix(bbCocoonNear, vec3(0.82, 0.62, 1.08), 0.24 + 0.34 * phasePurpleNear);
-                vec3 colInnerCloudNear = mix(pseudoSpectralColor(TcloudEarlyNear, 0.55 * tauCocoonNear + 0.45 * tauPolarNear, mix(yECocoonNear, yEPolarNear, 0.40), mix(recombCocoonNear, recombPolarNear, 0.45)), vec3(0.76, 0.96, 1.34), 0.32 * phaseBlueNear + 0.28 * phasePurpleNear);
+                colEqNear = mix(colEqNear, vec3(0.94, 0.72, 0.88), 0.08 * phasePurpleNear * (1.0 - phaseRedNear));
+                vec3 colRSNear = mix(kelvinToRGB(9000.0 + 2600.0 * phaseBlueNear), vec3(1.0, 0.78, 0.90), 0.16 + 0.12 * phasePurpleNear);
+                vec3 colRTNear = mix(vec3(0.88, 0.72, 0.98), vec3(1.00, 0.56, 0.31), smoothstep(0.45, 1.0, evo));
+                vec3 colCocoonNear = mix(bbCocoonNear, vec3(0.84, 0.72, 1.02), 0.14 + 0.16 * phasePurpleNear);
+                vec3 colInnerCloudNear = mix(pseudoSpectralColor(TcloudEarlyNear, 0.55 * tauCocoonNear + 0.45 * tauPolarNear, mix(yECocoonNear, yEPolarNear, 0.40), mix(recombCocoonNear, recombPolarNear, 0.45)), vec3(0.76, 0.96, 1.34), 0.32 * phaseBlueNear + 0.10 * phasePurpleNear);
                 vec3 colNestedShellNear = mix(pseudoSpectralColor(TcloudLateNear, 0.65 * tauEqNear + 0.35 * tauCocoonNear, mix(yEEqNear, yECocoonNear, 0.58), mix(recombEqNear, recombCocoonNear, 0.60)), vec3(0.97, 0.58, 0.38), 0.52 * phaseRedNear);
-                vec3 colNebulaCloudNear = mix(mix(colInnerCloudNear, colCocoonNear, 0.42), mix(colNestedShellNear, vec3(0.74, 0.92, 1.26), 0.50), 0.48 + 0.20 * phasePurpleNear);
+                vec3 colNebulaCloudNear = mix(mix(colInnerCloudNear, colCocoonNear, 0.42), mix(colNestedShellNear, vec3(0.74, 0.92, 1.26), 0.50), 0.44 + 0.08 * phasePurpleNear);
                 vec3 colPhotoNear = mix(pseudoSpectralColor(TphotoNear, mix(tauPolarNear, tauEqNear, 0.58), mix(yEPolarNear, yEEqNear, 0.58), recombPhotoNear), colPolarNear, 0.24);
                 vec3 colAfterglowNear = mix(kelvinToRGB(TagNear), vec3(0.62, 0.86, 1.30), 0.54);
                 colPolarNear = applyTintLumConserve(colPolarNear, tintPolarNear, 0.46);
@@ -1153,13 +1210,13 @@
                 vec3 eqWarmFar = mix(vec3(0.98, 0.62, 0.41), vec3(0.92, 0.56, 0.33), phaseRedFar);
                 vec3 colPolarFar = mix(bbPolarFar, vec3(0.70, 0.92, 1.34), 0.18 * phaseBlueFar);
                 vec3 colEqFar = mix(bbEqFar, eqWarmFar, 0.20 + 0.50 * phaseRedFar + 0.14 * lanthEqFar);
-                colEqFar = mix(colEqFar, vec3(0.88, 0.64, 1.10), 0.22 * phasePurpleFar * (1.0 - phaseRedFar));
-                vec3 colRSFar = mix(kelvinToRGB(9000.0 + 2600.0 * phaseBlueFar), vec3(1.0, 0.66, 0.82), 0.24 + 0.24 * phasePurpleFar);
+                colEqFar = mix(colEqFar, vec3(0.94, 0.72, 0.88), 0.08 * phasePurpleFar * (1.0 - phaseRedFar));
+                vec3 colRSFar = mix(kelvinToRGB(9000.0 + 2600.0 * phaseBlueFar), vec3(1.0, 0.78, 0.90), 0.16 + 0.12 * phasePurpleFar);
                 vec3 colRTFar = colRTNear;
-                vec3 colCocoonFar = mix(bbCocoonFar, vec3(0.82, 0.62, 1.08), 0.24 + 0.34 * phasePurpleFar);
-                vec3 colInnerCloudFar = mix(pseudoSpectralColor(TcloudEarlyFar, 0.55 * tauCocoonFar + 0.45 * tauPolarFar, mix(yECocoonFar, yEPolarFar, 0.40), mix(recombCocoonFar, recombPolarFar, 0.45)), vec3(0.76, 0.96, 1.34), 0.32 * phaseBlueFar + 0.28 * phasePurpleFar);
+                vec3 colCocoonFar = mix(bbCocoonFar, vec3(0.84, 0.72, 1.02), 0.14 + 0.16 * phasePurpleFar);
+                vec3 colInnerCloudFar = mix(pseudoSpectralColor(TcloudEarlyFar, 0.55 * tauCocoonFar + 0.45 * tauPolarFar, mix(yECocoonFar, yEPolarFar, 0.40), mix(recombCocoonFar, recombPolarFar, 0.45)), vec3(0.76, 0.96, 1.34), 0.32 * phaseBlueFar + 0.10 * phasePurpleFar);
                 vec3 colNestedShellFar = mix(pseudoSpectralColor(TcloudLateFar, 0.65 * tauEqFar + 0.35 * tauCocoonFar, mix(yEEqFar, yECocoonFar, 0.58), mix(recombEqFar, recombCocoonFar, 0.60)), vec3(0.97, 0.58, 0.38), 0.52 * phaseRedFar);
-                vec3 colNebulaCloudFar = mix(mix(colInnerCloudFar, colCocoonFar, 0.42), mix(colNestedShellFar, vec3(0.74, 0.92, 1.26), 0.50), 0.48 + 0.20 * phasePurpleFar);
+                vec3 colNebulaCloudFar = mix(mix(colInnerCloudFar, colCocoonFar, 0.42), mix(colNestedShellFar, vec3(0.74, 0.92, 1.26), 0.50), 0.44 + 0.08 * phasePurpleFar);
                 vec3 colPhotoFar = mix(pseudoSpectralColor(TphotoFar, mix(tauPolarFar, tauEqFar, 0.58), mix(yEPolarFar, yEEqFar, 0.58), recombPhotoFar), colPolarFar, 0.24);
                 vec3 colAfterglowFar = mix(kelvinToRGB(TagFar), vec3(0.62, 0.86, 1.30), 0.54);
                 colPolarFar = applyTintLumConserve(colPolarFar, tintPolarFar, 0.46);
@@ -1199,8 +1256,8 @@
                   float phaseRedLocal = mix(phaseRedNear, phaseRedFar, ltMix);
                   float phaseRetard = clamp((tDaysBase - tDaysLocal) / max(tDaysBase, 0.08), 0.0, 0.80);
                   phaseBlueLocal = clamp(phaseBlueLocal + 0.42 * phaseRetard * (1.0 - phaseBlueLocal), 0.0, 1.0);
-                  phasePurpleLocal = clamp(phasePurpleLocal + 0.20 * phaseRetard * (1.0 - phasePurpleLocal), 0.0, 1.0);
-                  phaseRedLocal = clamp(phaseRedLocal * (1.0 - 0.52 * phaseRetard), 0.0, 1.0);
+                  phasePurpleLocal = clamp(phasePurpleLocal + 0.05 * phaseRetard * (1.0 - phasePurpleLocal), 0.0, 1.0);
+                  phaseRedLocal = clamp(phaseRedLocal * (1.0 - 0.34 * phaseRetard), 0.0, 1.0);
                   float pLocalNorm = max(phaseBlueLocal + phasePurpleLocal + phaseRedLocal, 1e-4);
                   phaseBlueLocal /= pLocalNorm;
                   phasePurpleLocal /= pLocalNorm;
@@ -1257,6 +1314,7 @@
                   float rhoRT = 0.0;
                   float rhoJet = 0.0;
                   float rhoCocoon = 0.0;
+                  float rhoTorus = 0.0;
                   float rhoInnerCloud = 0.0;
                   float rhoNestedShell = 0.0;
                   float rhoShockCloud = 0.0;
@@ -1280,7 +1338,17 @@
                   float nebulaW = 0.55 + 0.95 * nebulaPhaseLocal;
                   float rhoNebulaBase = exp(-pow((r - nebulaR) / nebulaW, 2.0)) * (0.12 + 0.88 * phaseNebulaLocal);
 
-                  float coarseShell = rhoP + rhoE + rhoRS + 0.62 * rhoForward + 0.52 * rhoContact + 0.35 * rhoInnerBase + 0.70 * rhoShockCloudBase + 0.55 * rhoNestedBroad + 0.65 * rhoNebulaBase;
+                  // Explicit equatorial tidal torus (lanthanide-rich red component).
+                  float torusRise = smoothstep(0.10, 0.95, evoSh);
+                  float torusMajor = mix(Re * 0.66 + 0.35, Re * (0.98 + 0.32 * torusRise) + 0.75, torusRise);
+                  float torusMinor = 0.18 + 0.34 * torusRise + 0.06 * uOpacityContrast;
+                  float torusRad = length(p.xy);
+                  float torusRing = exp(-pow((torusRad - torusMajor) / max(torusMinor, 1e-4), 2.0));
+                  float torusVert = exp(-pow(p.z / max(torusMinor * (0.60 + 0.10 * (1.0 - phaseBlueLocal)), 1e-4), 2.0));
+                  float torusAz = 0.78 + 0.22 * sin(phiN * (8.0 + 3.0 * torusRise) + uTime * 0.52 + corrSeed * 4.2);
+                  rhoTorus = torusRing * torusVert * torusAz * torusRise * (0.36 + 0.86 * phaseRedLocal) * (0.84 + 0.40 * uOpacityContrast);
+
+                  float coarseShell = rhoP + rhoE + rhoRS + 0.62 * rhoForward + 0.52 * rhoContact + 0.72 * rhoTorus + 0.35 * rhoInnerBase + 0.70 * rhoShockCloudBase + 0.55 * rhoNestedBroad + 0.65 * rhoNebulaBase;
                   float stepMul = 1.0;
                   if (coarseShell < 0.0018) {
                     stepMul = 1.58;
@@ -1326,11 +1394,23 @@
                     float sheath = max(exp(-pow(axisR / max(sheathWidth, 1e-4), 2.0)) - spine, 0.0);
                     float along = smoothstep(0.12, 1.0, az) * (1.0 - smoothstep(jetLength, jetLength + (1.4 + 0.8 * evoSh), az));
                     float jetNoise = 0.58 + 0.42 * fbm(vec3(axisR * 3.1, az * 1.4 + uTime * 0.9, uTime * 0.65), localOctaves);
-                    float filament = 0.68 + 0.32 * sin(az * 8.0 - uTime * 3.2 + phi * 4.0);
-                    float shockPhaseNoise = fbm(vec3(axisR * 1.6 + phi * 0.5, az * 0.45 - uTime * 0.18, uTime * 0.11), max(2.0, localOctaves - 1.0));
-                    float shockPulse = 0.5 + 0.5 * sin(beamT * 20.0 - uTime * 3.4 + shockPhaseNoise * 6.2 + phi * 1.8);
-                    float shockTrainRaw = 0.74 + 0.26 * smoothstep(0.30, 0.90, shockPulse);
-                    float shockWindow = smoothstep(0.10, 0.72, beamT) * (1.0 - smoothstep(0.82, 1.0, beamT));
+
+                    // Turbulent filamentation and internal shocks: advected stochastic packets
+                    // rather than stationary periodic standing waves.
+                    float jetAdv = az * (1.70 + 0.20 * beamT) - uTime * (2.35 + 0.45 * collisionCore);
+                    float filFieldA = fbm(vec3(axisR * 2.9 + phi * 0.8, jetAdv * 0.42, uTime * 0.18), max(2.0, localOctaves - 1.0));
+                    float filFieldB = noise3(vec3(axisR * 5.2 - phi * 0.6, jetAdv * 0.90 + corrSeed * 1.4, uTime * 0.31));
+                    float filament = 0.74 + 0.26 * smoothstep(0.44, 0.92, 0.62 * filFieldA + 0.38 * filFieldB);
+
+                    float shockAdv = az * (0.92 + 0.24 * beamT) - uTime * (2.85 + 0.58 * collisionCore);
+                    float shockFieldA = fbm(vec3(phi * 1.7 + corrSeed * 2.2, shockAdv * 0.96, uTime * 0.15), max(2.0, localOctaves - 1.0));
+                    float shockFieldB = noise3(vec3(phi * 3.2 - corrSeed * 3.1, shockAdv * 1.75 + shockFieldA * 1.9, uTime * 0.21));
+                    float shockWindow = smoothstep(0.08, 0.76, beamT) * (1.0 - smoothstep(0.90, 1.0, beamT));
+                    float shockFieldMix = 0.50 * shockFieldA + 0.34 * shockFieldB + 0.16 * filFieldA;
+                    float shockPackets = smoothstep(0.66, 0.94, shockFieldMix);
+                    float packetContrast = mix(0.14, 0.34, shockWindow) * (0.85 + 0.15 * smoothstep(0.0, 0.90, evoSh));
+                    float shockJitter = 0.94 + 0.12 * noise3(vec3(phi * 1.1 + corrSeed * 0.7, shockAdv * 0.55, uTime * 0.09));
+                    float shockTrainRaw = clamp((1.0 + packetContrast * shockPackets) * shockJitter, 0.90, 1.34);
                     float shockTrain = mix(1.0, shockTrainRaw, shockWindow);
                     float jetBeam = (spine * (1.0 + 0.22 * filament) + sheath * 0.55) * along * jetNoise * shockTrain;
 
@@ -1427,15 +1507,16 @@
                   float daySoften = smoothstep(0.05, 4.5, tDaysLocal);
                   vec3 colJetSynch = mix(vec3(0.95, 1.12, 1.74), vec3(0.58, 0.80, 1.24), daySoften);
                   vec3 colJetMix = mix(mix(colorJet, colorJetHot, clamp(0.8 * collisionCore + 0.2 * (1.0 - evoSh), 0.0, 1.0)), colJetSynch, 0.58 * jetCool);
-                  vec3 colCocoonMix = mix(colCocoonLocal, vec3(0.69, 0.78, 1.16), 0.36 * daySoften);
+                  vec3 colCocoonMix = mix(colCocoonLocal, vec3(0.74, 0.80, 1.04), 0.28 * daySoften);
                   float yEWindNear = mix(yEEqNear, yEPolarNear, pow(abs(n.z), 1.15));
                   float yEWindFar = mix(yEEqFar, yEPolarFar, pow(abs(n.z), 1.15));
                   float yEWindLocal = mix(yEWindNear, yEWindFar, ltMix);
                   float lanthFracLocal = smoothstep(0.30, 0.18, yEWindLocal);
                   float lanthCurtain = clamp((0.25 + 1.05 * lanthFracLocal) * equa * (0.42 + 0.58 * smoothstep(0.20, 1.0, evoSh)) * uOpacityContrast, 0.0, 2.3);
                   float lineBlanket = lanthCurtain * (0.70 + 0.58 * equa) * (0.82 + 0.30 * viewEquatorial);
-                  vec3 lanthTransfer = vec3(1.0 + 0.14 * lineBlanket, 1.0 - 0.03 * lineBlanket, 1.0 - 0.34 * lineBlanket);
+                  vec3 lanthTransfer = vec3(1.0 + 0.16 * lineBlanket, 1.0 - 0.06 * lineBlanket, 1.0 - 0.40 * lineBlanket);
                   vec3 colEqTransfer = colEqLocal * lanthTransfer;
+                  vec3 colTorus = mix(colEqTransfer, vec3(1.04, 0.46, 0.24), 0.58 + 0.30 * phaseRedLocal);
                   vec3 colRSTransfer = colRSLocal * mix(vec3(1.0), lanthTransfer, 0.20);
                   vec3 colInnerTransfer = colInnerLocal * mix(vec3(1.0), lanthTransfer, 0.45);
                   vec3 colNestedTransfer = colNestedLocal * lanthTransfer;
@@ -1456,7 +1537,7 @@
                   float gradCD = abs(r - RcdLocal) * rhoContact / max(cdThickness * cdThickness, 1e-4);
                   float gradRS = abs(r - RrsLocal) * rhoRS / max(rsThickness * rsThickness, 1e-4);
                   float shockRim = smoothstep(0.16, 1.26, gradP + gradE + 1.6 * gradFS + 1.3 * gradCD + 1.5 * gradRS);
-                  vec3 colShockRim = mix(colRSLocal, vec3(1.08, 0.98, 1.22), 0.38 + 0.22 * phaseBlueLocal);
+                  vec3 colShockRim = mix(colRSLocal, vec3(1.06, 1.00, 1.12), 0.30 + 0.10 * phaseBlueLocal);
                   float vHom = mix(vpScale, veScale, 0.42);
                   float vSed = vHom * pow(1.0 + 2.8 * evoSh, -0.58);
                   float vShockNorm = clamp(mix(vHom, vSed, sedovBlend) * (0.90 + 0.18 * collisionCore), 0.30, 1.45);
@@ -1483,9 +1564,10 @@
                   float dShock = 1.0 / (gammaShock * max(0.22, 1.0 - betaShock * muShock));
                   float beamShock = clamp(pow(dShock, 2.1), 0.58, 2.55);
                   vec3 colShockFS = mix(kelvinToRGB(7200.0 + 12400.0 * pow(vShockNorm, 1.05)), vec3(0.68, 0.90, 1.34), 0.26 + 0.36 * phaseBlueLocal);
-                  vec3 colShockRS = mix(colRSLocal, vec3(1.0, 0.72, 0.92), 0.28 + 0.18 * phasePurpleLocal);
-                  vec3 colShockCD = mix(vec3(0.92, 0.78, 1.26), vec3(1.0, 0.58, 0.35), smoothstep(0.25, 1.0, evoSh));
-                  vec3 colShockFresh = mix(vec3(1.16, 1.14, 1.28), vec3(0.82, 0.95, 1.30), teRelax);
+                  vec3 colShockRS = mix(colRSLocal, vec3(1.0, 0.78, 0.90), 0.16 + 0.10 * phasePurpleLocal);
+                  vec3 colShockCD = mix(vec3(0.94, 0.84, 1.08), vec3(1.0, 0.58, 0.35), smoothstep(0.25, 1.0, evoSh));
+                  vec3 colShockFresh = mix(vec3(1.08, 1.08, 1.16), vec3(0.82, 0.95, 1.30), teRelax);
+                  float torusRim = exp(-pow((torusRad - torusMajor) / max(torusMinor * 1.25, 1e-4), 2.0)) * exp(-pow((abs(p.z) - torusMinor * 0.55) / max(torusMinor * 0.40, 1e-4), 2.0));
                   float betaJet = clamp(0.20 + 0.16 * collisionCore + 0.10 * (uJetIntensity / 3.0), 0.14, 0.46);
                   vec3 jetFlowDir = normalize(vec3(p.xy * 0.28, p.z + 1e-6));
                   float muJet = clamp(dot(jetFlowDir, los), -1.0, 1.0);
@@ -1495,31 +1577,35 @@
                   vec3 colJetDopp = mix(colJetMix * vec3(0.96, 0.92, 0.90), colJetMix * vec3(1.05, 1.08, 1.18), smoothstep(1.0, 1.35, dJet));
                   // Slightly stronger veil attenuation for better late-time visibility.
                   float diffuseVeilAtten = mix(0.94, 0.62, smoothstep(0.12, 0.95, tDaysLocal));
+                  float thermalPurity = clamp(1.0 - 0.28 * phasePurpleLocal * (1.0 - 0.65 * phaseRedLocal), 0.72, 1.0);
+                  float nonThermalBoost = 1.0 + 0.24 * phasePurpleLocal * (0.65 + 0.35 * (1.0 - phaseRedLocal));
 
                   vec3 emiss = vec3(0.0);
-                  emiss += rhoP * (1.65 * polarFade + 0.45) * colPolarLocal;
-                  emiss += rhoE * (0.45 + 1.15 * eqEmergence) * colEqTransfer;
+                  emiss += thermalPurity * rhoP * (1.65 * polarFade + 0.45) * colPolarLocal;
+                  emiss += thermalPurity * rhoE * (0.45 + 1.12 * eqEmergence + 0.20 * phaseRedLocal) * colEqTransfer;
+                  emiss += thermalPurity * rhoTorus * (0.84 + 1.12 * phaseRedLocal) * colTorus;
+                  emiss += thermalPurity * torusRim * rhoTorus * (0.36 + 0.58 * phaseRedLocal) * vec3(1.08, 0.50, 0.26);
                   emiss += rhoRS * 1.95 * colRSTransfer;
                   emiss += rhoRT * 1.20 * colRTLocal;
-                  emiss += rhoJet * (2.25 + 0.75 * collisionCore) * colJetDopp * beamJet;
-                  emiss += rhoCocoon * (1.15 + 1.10 * collisionCore) * colCocoonMix;
+                  emiss += nonThermalBoost * rhoJet * (2.25 + 0.75 * collisionCore) * colJetDopp * beamJet;
+                  emiss += mix(nonThermalBoost, 1.0, 0.20) * rhoCocoon * (1.15 + 1.10 * collisionCore) * colCocoonMix;
                   vec3 cloudChromA = mix(colInnerTransfer, colNebTransfer, 0.38);
                   vec3 cloudChromB = mix(colNestedTransfer, colCocoonMix, 0.46);
                   vec3 cloudChrom = mix(cloudChromA, cloudChromB, smoothstep(0.25, 0.85, corrSeed));
-                  emiss += rhoInnerCloud * (1.05 + 0.50 * phaseBlueLocal + 0.20 * phasePurpleLocal) * mix(colInnerTransfer, colCocoonMix, 0.24 * phasePurpleLocal);
-                  emiss += rhoShockCloud * (1.10 + 0.70 * phaseBlueLocal + 0.16 * phasePurpleLocal) * mix(colInnerTransfer, cloudChrom, 0.28);
-                  emiss += rhoNestedShell * (0.95 + 0.40 * collisionCore + 0.20 * phaseRedLocal) * mix(colNestedTransfer, colRTLocal, 0.16 * phasePurpleLocal);
-                  emiss += rhoNebula * diffuseVeilAtten * (0.86 + 0.34 * phaseBlueLocal + 0.26 * phasePurpleLocal) * mix(colNebTransfer, cloudChrom, 0.46);
+                  emiss += thermalPurity * rhoInnerCloud * (1.05 + 0.50 * phaseBlueLocal + 0.06 * phasePurpleLocal) * mix(colInnerTransfer, colCocoonMix, 0.10 * phasePurpleLocal);
+                  emiss += thermalPurity * rhoShockCloud * (1.10 + 0.70 * phaseBlueLocal + 0.05 * phasePurpleLocal) * mix(colInnerTransfer, cloudChrom, 0.20);
+                  emiss += thermalPurity * rhoNestedShell * (0.95 + 0.40 * collisionCore + 0.20 * phaseRedLocal) * mix(colNestedTransfer, colRTLocal, 0.06 * phasePurpleLocal);
+                  emiss += thermalPurity * rhoNebula * diffuseVeilAtten * (0.86 + 0.34 * phaseBlueLocal + 0.08 * phasePurpleLocal) * mix(colNebTransfer, cloudChrom, 0.36);
                   emiss += rhoForward * vec3(0.66, 0.86, 1.25);
                   emiss += rhoContact * mix(vec3(0.90, 0.78, 1.18), vec3(0.98, 0.62, 0.42), smoothstep(0.35, 1.0, evoLocal)) * (0.78 + 0.32 * collisionCore);
-                  emiss += rhoAfterglow * (0.88 + 0.32 * phaseBlueLocal) * colAfterglowLocal;
-                  emiss += rhoPhoto * photoBand * (1.15 + 0.25 * phaseBlueLocal) * colPhotoTransfer;
-                  emiss += rhoAmbient * (0.44 * diffuseVeilAtten) * vec3(0.92, 0.64, 0.86);
+                  emiss += nonThermalBoost * rhoAfterglow * (0.88 + 0.32 * phaseBlueLocal) * colAfterglowLocal;
+                  emiss += thermalPurity * rhoPhoto * photoBand * (1.15 + 0.25 * phaseBlueLocal) * colPhotoTransfer;
+                  emiss += thermalPurity * rhoAmbient * (0.44 * diffuseVeilAtten) * vec3(0.90, 0.72, 0.82);
                   emiss += shockRim * (0.72 + 0.52 * collisionCore) * colShockRim;
-                  emiss += compFS * 0.82 * shockHeatE * colShockFS * shockAtten * beamShock;
-                  emiss += compRS * 0.74 * shockHeatE * colShockRS * shockAtten * beamShock;
-                  emiss += compCD * 0.66 * shockHeatE * colShockCD * mix(shockAtten, 1.0, 0.35) * mix(beamShock, 1.0, 0.35);
-                  emiss += (0.28 * compFS + 0.24 * compRS) * shockNonThermal * colShockFresh * beamShock;
+                  emiss += mix(1.0, nonThermalBoost, 0.35) * compFS * 0.82 * shockHeatE * colShockFS * shockAtten * beamShock;
+                  emiss += mix(1.0, nonThermalBoost, 0.35) * compRS * 0.74 * shockHeatE * colShockRS * shockAtten * beamShock;
+                  emiss += mix(1.0, nonThermalBoost, 0.35) * compCD * 0.66 * shockHeatE * colShockCD * mix(shockAtten, 1.0, 0.35) * mix(beamShock, 1.0, 0.35);
+                  emiss += mix(1.0, nonThermalBoost, 0.55) * (0.28 * compFS + 0.24 * compRS) * shockNonThermal * colShockFresh * beamShock;
                   float domainFade = 1.0 - smoothstep(boundRadius * 0.84, boundRadius * 1.06, r);
                   emiss *= domainFade;
                   emiss *= heatNormLocal * thermLocal * shockBoost;
@@ -1528,7 +1614,7 @@
 
                   float corePulse = 0.68 + 0.32 * sin(uTime * 9.0);
                   float coreGlow = exp(-pow(r / 0.36, 2.0)) * (0.95 + 0.8 * corePulse) * uRemnantLum;
-                  emiss += coreGlow * vec3(2.0, 1.7, 2.4);
+                  emiss += coreGlow * vec3(2.0, 1.82, 2.05);
 
                   float blastHalo = 0.0;
                   if (uAct < 2.5) {
@@ -1552,16 +1638,16 @@
                     emiss += blastHalo * vec3(1.4, 1.1, 1.7);
                   }
 
-                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.33 + rhoCocoon * 0.52 + rhoInnerCloud * 0.42 + rhoShockCloud * 0.52 + rhoNestedShell * 0.48 + rhoNebula * (0.46 * diffuseVeilAtten) + rhoAfterglow * 0.34 + rhoPhoto * 0.46 + rhoForward * 0.34 + rhoContact * 0.40 + rhoAmbient * (0.34 * diffuseVeilAtten) + blastHalo * 0.3);
+                  float sigma = (rhoP * 0.72 + rhoE * 1.18 * uOpacityContrast + rhoTorus * (1.35 * uOpacityContrast) + rhoRS * 0.9 + rhoRT * 1.1 + rhoJet * 0.33 + rhoCocoon * 0.52 + rhoInnerCloud * 0.42 + rhoShockCloud * 0.52 + rhoNestedShell * 0.48 + rhoNebula * (0.46 * diffuseVeilAtten) + rhoAfterglow * 0.34 + rhoPhoto * 0.46 + rhoForward * 0.34 + rhoContact * 0.40 + rhoAmbient * (0.34 * diffuseVeilAtten) + blastHalo * 0.3);
                   sigma *= opacityScale * densityScale * 0.34;
 
                   float dtEff = dt * stepMul;
-                  if (sigma < 0.0015 && coarseShell < 0.0024 && (rhoJet + rhoCocoon + rhoInnerCloud + rhoShockCloud + rhoNestedShell + rhoNebula + rhoAfterglow + rhoPhoto + rhoForward + rhoContact) < 0.0018) {
+                  if (sigma < 0.0015 && coarseShell < 0.0024 && (rhoJet + rhoCocoon + rhoTorus + rhoInnerCloud + rhoShockCloud + rhoNestedShell + rhoNebula + rhoAfterglow + rhoPhoto + rhoForward + rhoContact) < 0.0018) {
                     t += dtEff;
                     continue;
                   }
 
-                  float selfTau = (rhoE * 1.30 * uOpacityContrast + rhoNestedShell * 0.78 + rhoNebula * 0.68 + rhoCocoon * 0.52 + rhoP * 0.62 + rhoShockCloud * 0.72 + rhoContact * 0.46) * max(boundRadius - r, 0.0) * 0.040;
+                  float selfTau = (rhoE * 1.30 * uOpacityContrast + rhoTorus * (1.42 * uOpacityContrast) + rhoNestedShell * 0.78 + rhoNebula * 0.68 + rhoCocoon * 0.52 + rhoP * 0.62 + rhoShockCloud * 0.72 + rhoContact * 0.46) * max(boundRadius - r, 0.0) * 0.040;
                   float selfShadow = exp(-selfTau);
                   float frontShadow = mix(0.60, 1.0, pow(transLum, 0.30));
                   emiss *= mix(frontShadow, frontShadow * selfShadow, 0.58);
@@ -1575,7 +1661,7 @@
                   float hgBack = hgPhase(muScat, -0.12);
                   float phaseScat = clamp((0.72 * hgForward + 0.28 * hgBack) / 0.07957747, 0.10, 3.20);
                   vec3 scatterCol = mix(colPhotoTransfer, mix(colShockFS, colNebTransfer, 0.35), 0.55);
-                  float scatterDensity = rhoForward + 0.72 * rhoContact + 0.52 * rhoCocoon + 0.32 * rhoNebula * diffuseVeilAtten;
+                  float scatterDensity = rhoForward + 0.72 * rhoContact + 0.36 * rhoTorus + 0.52 * rhoCocoon + 0.32 * rhoNebula * diffuseVeilAtten;
                   emiss += scatterDensity * (0.07 + 0.22 * albedo) * phaseScat * scatterCol;
 
                   float lanthIon = 0.55 + 0.45 * smoothstep(0.15, 4.5, tDaysLocal);
